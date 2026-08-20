@@ -1,0 +1,6 @@
+{
+  "name": "CampusConnect",
+  "description": "Unified campus discovery and engagement platform for Vellore Institute of Technology with AI matchmaking for events, student clubs, and campus resources.",
+  "requestFramePermissions": ["notifications"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
