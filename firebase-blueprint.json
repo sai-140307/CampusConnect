@@ -1,0 +1,85 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Registered campus student/organizer profile",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "major": { "type": "string" },
+        "graduationYear": { "type": "string" },
+        "bio": { "type": "string" },
+        "interests": { "type": "array", "items": { "type": "string" } },
+        "rsvpdEvents": { "type": "array", "items": { "type": "string" } },
+        "joinedClubs": { "type": "array", "items": { "type": "string" } },
+        "organizerClubIds": { "type": "array", "items": { "type": "string" } },
+        "role": { "type": "string", "enum": ["student", "club_admin", "faculty", "superadmin"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "email"]
+    },
+    "CampusEvent": {
+      "title": "Campus Event",
+      "description": "Events happening on campus",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "shortDesc": { "type": "string" },
+        "description": { "type": "string" },
+        "category": { "type": "string" },
+        "organizer": { "type": "string" },
+        "organizerRole": { "type": "string" },
+        "clubId": { "type": "string" },
+        "campusZone": { "type": "string" },
+        "building": { "type": "string" },
+        "room": { "type": "string" },
+        "date": { "type": "string" },
+        "startTime": { "type": "string" },
+        "endTime": { "type": "string" },
+        "displayTime": { "type": "string" },
+        "perks": { "type": "array", "items": { "type": "string" } },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "rsvpCount": { "type": "number" },
+        "capacity": { "type": "number" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "category", "building", "date"]
+    },
+    "ChatMessage": {
+      "title": "Chat Message",
+      "description": "Discussion message on an event or club feed",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "eventId": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userRole": { "type": "string" },
+        "content": { "type": "string" },
+        "tag": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "likes": { "type": "number" }
+      },
+      "required": ["eventId", "userId", "content"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile document"
+    },
+    "/events/{eventId}": {
+      "schema": "CampusEvent",
+      "description": "Campus events collection"
+    },
+    "/events/{eventId}/messages/{messageId}": {
+      "schema": "ChatMessage",
+      "description": "Live event discussion stream"
+    }
+  }
+}

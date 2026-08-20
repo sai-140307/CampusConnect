@@ -1,0 +1,43 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // User profiles
+    match /users/{userId} {
+      allow read: if true;
+      allow create, update: if isOwner(userId) || isSignedIn();
+      allow delete: if false;
+    }
+
+    // Campus events
+    match /events/{eventId} {
+      allow read: if true;
+      allow create, update, delete: if true;
+
+      // Subcollection discussion messages
+      match /messages/{messageId} {
+        allow read: if true;
+        allow create, update, delete: if true;
+      }
+    }
+
+    // Top-level global and target campus chat stream
+    match /campus_chats/{messageId} {
+      allow read: if true;
+      allow create, update, delete: if true;
+    }
+
+    // Dispatched email notification logs
+    match /dispatched_emails/{emailId} {
+      allow read, write: if true;
+    }
+  }
+}
