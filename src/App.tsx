@@ -12,6 +12,7 @@ import {
   AIMatchResult,
   UserRole,
   EmailNotificationSettings,
+  EventRegistration,
 } from './types';
 
 import {
@@ -55,6 +56,13 @@ import {
   subscribeToCampusChats,
   sendChatMessageToFirestore,
   updateChatLikeInFirestore,
+  subscribeToEvents,
+  saveEventToFirestore,
+  deleteEventFromFirestore,
+  subscribeToRegistrations,
+  registerForEvent,
+  cancelRegistration,
+  registrationId,
   FirebaseUser,
 } from './firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
@@ -71,7 +79,6 @@ type Tab = 'explore' | 'events' | 'clubs' | 'resources' | 'map' | 'calendar' | '
 type Theme = 'light' | 'dark';
 
 const STORAGE_KEYS = {
-  CUSTOM_EVENTS: 'campusconnect_custom_events_v1',
   USER: 'campusconnect_user_v1',
   NOTIFICATIONS: 'campusconnect_notifications_v1',
   MESSAGES: 'campusconnect_messages_v1',
@@ -150,16 +157,8 @@ function loadInitialProfile(): UserProfile {
   return dropStaleSeedEvents(profile, readString(STORAGE_KEYS.SEED_CYCLE));
 }
 
-function loadInitialEvents(profile: UserProfile): CampusEvent[] {
-  const mine = new Set(profile.rsvpdEvents);
-  const seed = MOCK_EVENTS.map((e) => (mine.has(e.id) ? { ...e, rsvpCount: e.rsvpCount + 1 } : e));
-  const stored = readJson<CampusEvent[]>(STORAGE_KEYS.CUSTOM_EVENTS, []);
-  const cutoff = syncedNow() - 30 * DAY_MS;
-  const custom = (Array.isArray(stored) ? stored : []).filter(
-    (e) => e && typeof e.id === 'string' && !SEED_EVENT_IDS.has(e.id) && e.date && e.startTime && eventEndMs(e) > cutoff
-  );
-  return [...custom, ...seed];
-}
+/** Identifies one occurrence of an event: sample events repeat on new dates. */
+const occurrenceKey = (eventId: string, date: string) => `${eventId}__${date}`;
 
 function dedupeById<T extends { id: string }>(items: T[]): T[] {
   const seen = new Set<string>();
@@ -205,7 +204,12 @@ export default function App() {
 
   // Data
   const [userProfile, setUserProfile] = useState<UserProfile>(loadInitialProfile);
-  const [events, setEvents] = useState<CampusEvent[]>(() => loadInitialEvents(loadInitialProfile()));
+  /** Events organizers have published, live from the shared database. */
+  const [publishedEvents, setPublishedEvents] = useState<CampusEvent[]>([]);
+  /** Everyone's registrations, live from the shared database. */
+  const [registrations, setRegistrations] = useState<EventRegistration[]>([]);
+  const [registrationsLoaded, setRegistrationsLoaded] = useState(false);
+  const [sharedDataError, setSharedDataError] = useState(false);
   const [clubs, setClubs] = useState<CampusClub[]>(() => {
     const joined = new Set(loadInitialProfile().joinedClubs);
     return MOCK_CLUBS.map((c) => (joined.has(c.id) ? { ...c, membersCount: c.membersCount + 1 } : c));
@@ -239,6 +243,29 @@ export default function App() {
   const [isVideoShowcaseOpen, setIsVideoShowcaseOpen] = useState(false);
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
 
+  // Registrations grouped by event occurrence, for live counts and attendee lists.
+  const registrationsByOccurrence = useMemo(() => {
+    const map = new Map<string, EventRegistration[]>();
+    registrations.forEach((r) => {
+      const key = occurrenceKey(r.eventId, r.eventDate);
+      const list = map.get(key);
+      if (list) list.push(r);
+      else map.set(key, [r]);
+    });
+    return map;
+  }, [registrations]);
+
+  // Every event: published ones first, then the built-in samples. The "going"
+  // count is the event's starting number plus real registrations from everyone.
+  const events = useMemo(() => {
+    const cutoff = syncedNow() - 30 * DAY_MS;
+    const published = publishedEvents.filter((e) => !SEED_EVENT_IDS.has(e.id) && eventEndMs(e) > cutoff);
+    return [...published, ...MOCK_EVENTS].map((e) => {
+      const extra = registrationsByOccurrence.get(occurrenceKey(e.id, e.date))?.length || 0;
+      return extra ? { ...e, rsvpCount: e.rsvpCount + extra } : e;
+    });
+  }, [publishedEvents, registrationsByOccurrence]);
+
   // Always read the selected event and club from the live lists, so an open
   // dialog shows current counts instead of a stale copy.
   const selectedEvent = useMemo(
@@ -258,13 +285,6 @@ export default function App() {
   const activeEmail = firebaseUser?.email || userProfile.email || userProfile.emailSettings?.recipientEmail || '';
 
   // ---- Persistence -------------------------------------------------------
-
-  useEffect(() => {
-    writeJson(
-      STORAGE_KEYS.CUSTOM_EVENTS,
-      events.filter((e) => !SEED_EVENT_IDS.has(e.id))
-    );
-  }, [events]);
 
   useEffect(() => {
     writeJson(STORAGE_KEYS.USER, userProfile);
@@ -309,6 +329,46 @@ export default function App() {
       if (unsubscribe) unsubscribe();
     };
   }, [signedInUid]);
+
+  // ---- Shared events and registrations -----------------------------------
+
+  useEffect(() => {
+    if (!signedInUid) {
+      setPublishedEvents([]);
+      setRegistrations([]);
+      setRegistrationsLoaded(false);
+      return;
+    }
+    setSharedDataError(false);
+    const stopEvents = subscribeToEvents(setPublishedEvents, () => setSharedDataError(true));
+    const stopRegistrations = subscribeToRegistrations(
+      (list) => {
+        setRegistrations(list);
+        setRegistrationsLoaded(true);
+      },
+      () => setSharedDataError(true)
+    );
+    return () => {
+      stopEvents();
+      stopRegistrations();
+    };
+  }, [signedInUid]);
+
+  // The signed-in person's schedule is exactly their registrations for the
+  // current occurrences. Keep the profile's list in step with that.
+  useEffect(() => {
+    if (!signedInUid || !registrationsLoaded) return;
+    const current = new Set(events.map((e) => occurrenceKey(e.id, e.date)));
+    const mine = registrations
+      .filter((r) => r.uid === signedInUid && current.has(occurrenceKey(r.eventId, r.eventDate)))
+      .map((r) => r.eventId)
+      .sort();
+    setUserProfile((prev) => {
+      const before = [...prev.rsvpdEvents].sort();
+      if (before.length === mine.length && before.every((id, i) => id === mine[i])) return prev;
+      return { ...prev, rsvpdEvents: mine };
+    });
+  }, [registrations, registrationsLoaded, signedInUid, events]);
 
   // ---- Wrap-up notices for events the student attended --------------------
 
@@ -488,15 +548,27 @@ export default function App() {
         return;
       }
 
-      setUserProfile((prev) => ({
-        ...prev,
-        rsvpdEvents: wasGoing
-          ? prev.rsvpdEvents.filter((id) => id !== eventId)
-          : Array.from(new Set([...prev.rsvpdEvents, eventId])),
-      }));
-      setEvents((prev) =>
-        prev.map((e) => (e.id === eventId ? { ...e, rsvpCount: Math.max(0, e.rsvpCount + (wasGoing ? -1 : 1)) } : e))
-      );
+      if (!signedInUid) return;
+      const id = registrationId(target.id, target.date, signedInUid);
+
+      // The database listener updates the schedule and the count for everyone,
+      // including this device, as soon as the write is made.
+      const write = wasGoing
+        ? cancelRegistration(id)
+        : registerForEvent({
+            id,
+            eventId: target.id,
+            eventDate: target.date,
+            uid: signedInUid,
+            name: userProfile.name || 'Student',
+            major: userProfile.major,
+            year: userProfile.year,
+            createdAt: syncedNow(),
+          });
+      write.catch((err) => {
+        console.warn('Registration failed:', err);
+        showToast(wasGoing ? 'Could not cancel your RSVP. Try again.' : 'Could not save your RSVP. Try again.');
+      });
 
       if (wasGoing) {
         showToast('RSVP cancelled.');
@@ -512,7 +584,7 @@ export default function App() {
         showToast('RSVP confirmed.');
       }
     },
-    [events, userProfile, activeEmail, showToast]
+    [events, userProfile, activeEmail, showToast, signedInUid]
   );
 
   const handleToggleJoinClub = useCallback(
@@ -625,35 +697,49 @@ export default function App() {
       attendeeAvatars: [],
       campusZone: 'Central Hub',
       ...draft,
+      createdBy: signedInUid,
+      createdAt: syncedNow(),
       id: newId('ev'),
       title: (draft.title || 'Campus event').trim(),
       date: draft.date || '',
     };
 
-    setEvents((prev) => [created, ...prev]);
-    addNotification({
-      id: newId('notif'),
-      title: `New event: ${created.title}`,
-      body: `Hosted by ${created.organizer} in ${created.building} (${created.room}).`,
-      timestamp: 'Just now',
-      createdAt: syncedNow(),
-      type: 'reminder',
-      eventId: created.id,
-      isRead: false,
-    });
-    showToast('Event published.');
+    // Saved to the shared database, so it appears for every student straight away.
+    saveEventToFirestore(created)
+      .then(() => {
+        addNotification({
+          id: newId('notif'),
+          title: `New event: ${created.title}`,
+          body: `Hosted by ${created.organizer} in ${created.building} (${created.room}).`,
+          timestamp: 'Just now',
+          createdAt: syncedNow(),
+          type: 'reminder',
+          eventId: created.id,
+          isRead: false,
+        });
+        showToast('Event published.');
+      })
+      .catch((err) => {
+        console.warn('Publish failed:', err);
+        showToast('Could not publish the event. Check your connection and try again.');
+      });
   };
 
   const handleDeleteEvent = (eventId: string) => {
     if (!requireOrganizer()) return;
-    setEvents((prev) => prev.filter((e) => e.id !== eventId));
-    setUserProfile((prev) => ({
-      ...prev,
-      rsvpdEvents: prev.rsvpdEvents.filter((id) => id !== eventId),
-      savedEvents: prev.savedEvents.filter((id) => id !== eventId),
-    }));
-    setSelectedEventId((current) => (current === eventId ? null : current));
-    showToast('Event deleted.');
+    if (SEED_EVENT_IDS.has(eventId)) {
+      showToast('Built-in sample events cannot be deleted.');
+      return;
+    }
+    deleteEventFromFirestore(eventId)
+      .then(() => {
+        setSelectedEventId((current) => (current === eventId ? null : current));
+        showToast('Event deleted.');
+      })
+      .catch((err) => {
+        console.warn('Delete failed:', err);
+        showToast('Only the organizer who published this event can delete it.');
+      });
   };
 
   const handleBroadcastNotification = (title: string, body: string, urgent: boolean) => {
@@ -766,6 +852,13 @@ export default function App() {
       />
 
       <LiveCampusTicker notifications={notifications} onSelectNotification={openNotification} />
+
+      {sharedDataError && (
+        <div role="alert" className="bg-rose-50 border-b border-rose-200 text-rose-800 text-sm px-4 py-2 text-center">
+          Live event data could not be loaded, so registrations are unavailable. Check your connection and that the
+          database rules are deployed, then reload.
+        </div>
+      )}
 
       <main id="main" className="flex-1">
         <div key={activeTab} className="cc-page">
@@ -899,6 +992,7 @@ export default function App() {
         onPostEvent={handleCreateEvent}
         onBroadcastNotification={handleBroadcastNotification}
         existingEvents={upcomingEvents}
+        attendeesFor={(ev) => registrationsByOccurrence.get(occurrenceKey(ev.id, ev.date)) || []}
       />
 
       <EmailNotificationModal

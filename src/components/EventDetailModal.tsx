@@ -485,7 +485,7 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
               <span>Open full discussion</span>
             </button>
 
-            {isOrganizer && onDeleteEvent && (
+            {isOrganizer && onDeleteEvent && event.createdBy && (
               <button
                 onClick={() => {
                   if (window.confirm(`Are you sure you want to delete "${event.title}"?`)) {

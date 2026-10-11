@@ -312,7 +312,7 @@ export const EventsView: React.FC<EventsViewProps> = ({
                 onOpenChat={onOpenChat}
               />
               {/* Organizer Delete Button if user is an organizer */}
-              {isOrganizer && onDeleteEvent && (
+              {isOrganizer && onDeleteEvent && ev.createdBy && (
                 <button
                   type="button"
                   onClick={(e) => {
