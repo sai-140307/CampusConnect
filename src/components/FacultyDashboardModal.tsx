@@ -14,7 +14,7 @@ import {
   Users,
   ShieldCheck
 } from 'lucide-react';
-import { CampusEvent, PerkType, EventCategory } from '../types';
+import { CampusEvent, EventRegistration, PerkType, EventCategory } from '../types';
 import { enhanceEventWithAI } from '../services/aiService';
 import { sendOrganizerBroadcastEmail } from '../services/emailService';
 import { CAMPUS_TIME_ZONE_LABEL, campusDateKey, campusDateTimeToMs, eventEndMs, formatEventWhen, now as syncedNow } from '../utils/campusTime';
@@ -25,6 +25,8 @@ interface FacultyDashboardModalProps {
   onPostEvent: (newEvent: Partial<CampusEvent>) => void;
   onBroadcastNotification: (title: string, body: string, urgent: boolean) => void;
   existingEvents: CampusEvent[];
+  /** People who registered through the app for this event. */
+  attendeesFor?: (event: CampusEvent) => EventRegistration[];
 }
 
 const AVAILABLE_PERKS: PerkType[] = [
@@ -58,7 +60,9 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
   onPostEvent,
   onBroadcastNotification,
   existingEvents,
+  attendeesFor,
 }) => {
+  const [openRosterId, setOpenRosterId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'create' | 'broadcast' | 'analytics'>('create');
 
   // Form State
@@ -268,7 +272,7 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
             }`}
           >
             <BarChart3 className="w-3.5 h-3.5" />
-            <span>Attendance & Roster</span>
+            <span>Attendees</span>
           </button>
         </div>
 
@@ -591,20 +595,57 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
           {/* TAB 3: ANALYTICS & ROSTER */}
           {activeTab === 'analytics' && (
             <div className="space-y-4 text-xs">
-              <p className="text-ink-600 font-medium">Real-time RSVP registrations across all hosted campus events:</p>
+              <p className="text-ink-600 font-medium">
+                Select an event to see who registered through the app. Counts update live.
+              </p>
               <div className="space-y-2">
-                {existingEvents.map((ev) => (
-                  <div key={ev.id} className="p-3 bg-white rounded-xl border border-brand-200/80 shadow-2xs flex items-center justify-between">
-                    <div>
-                      <h4 className="font-bold text-ink-900 text-xs">{ev.title}</h4>
-                      <p className="text-xs text-ink-500">{formatEventWhen(ev)} • {ev.building}</p>
+                {existingEvents.map((ev) => {
+                  const attendees = attendeesFor ? attendeesFor(ev) : [];
+                  const isOpen = openRosterId === ev.id;
+                  return (
+                    <div key={ev.id} className="bg-white rounded-xl border border-ink-200 overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => setOpenRosterId(isOpen ? null : ev.id)}
+                        aria-expanded={isOpen}
+                        className="w-full p-3 flex items-center justify-between gap-3 text-left cursor-pointer hover:bg-ink-50 transition-colors"
+                      >
+                        <span className="min-w-0">
+                          <span className="block font-bold text-ink-900 text-xs truncate">{ev.title}</span>
+                          <span className="block text-xs text-ink-500">{formatEventWhen(ev)} • {ev.building}</span>
+                        </span>
+                        <span className="text-right shrink-0">
+                          <span className="block font-bold text-brand-600 text-sm tabular-nums">
+                            {ev.rsvpCount.toLocaleString('en-IN')}
+                            <span className="text-xs text-ink-400 font-normal"> / {ev.capacity.toLocaleString('en-IN')}</span>
+                          </span>
+                          <span className="block text-2xs text-ink-500 tabular-nums">{attendees.length} via app</span>
+                        </span>
+                      </button>
+                      {isOpen && (
+                        <div className="border-t border-ink-100 px-3 py-2.5 bg-ink-50/60">
+                          {attendees.length === 0 ? (
+                            <p className="text-ink-500">No one has registered through the app yet.</p>
+                          ) : (
+                            <ol className="space-y-1.5">
+                              {[...attendees]
+                                .sort((a, b) => a.createdAt - b.createdAt)
+                                .map((a, index) => (
+                                  <li key={a.id} className="flex items-center justify-between gap-3">
+                                    <span className="font-medium text-ink-900 truncate">
+                                      <span className="text-ink-400 tabular-nums mr-2">{index + 1}.</span>
+                                      {a.name}
+                                    </span>
+                                    <span className="text-ink-500 truncate">{[a.major, a.year].filter(Boolean).join(', ')}</span>
+                                  </li>
+                                ))}
+                            </ol>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <div className="text-right">
-                      <span className="font-bold text-brand-600 text-sm">{ev.rsvpCount}</span>
-                      <span className="text-xs text-ink-400">/{ev.capacity} spots</span>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

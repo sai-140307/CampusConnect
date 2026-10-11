@@ -17,19 +17,32 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // Campus events: any signed-in person can read. Writing still only requires
-    // sign-in, because the organizer role lives in the client today. Before a real
-    // launch, move the role to a custom claim and require it here:
-    //   allow write: if request.auth.token.organizer == true;
+    // Events published by organizers. Any signed-in person can read them. An event
+    // records who published it, and only that person can change or delete it.
+    // The organizer role itself is still checked in the app; before a real launch,
+    // move it to a custom claim and also require it here:
+    //   && request.auth.token.organizer == true
     match /events/{eventId} {
       allow read: if isSignedIn();
-      allow create, update, delete: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid;
+      allow update: if isSignedIn()
+        && resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdBy == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.createdBy == request.auth.uid;
+    }
 
-      match /messages/{messageId} {
-        allow read: if isSignedIn();
-        allow create: if isSignedIn();
-        allow update, delete: if false;
-      }
+    // Registrations: one document per person per event, named
+    // "<eventId>__<date>__<uid>". Any signed-in person can read them (for live
+    // counts and attendee lists); you can only create or remove your own.
+    match /registrations/{registrationId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && registrationId == request.resource.data.eventId + '__' + request.resource.data.eventDate + '__' + request.auth.uid
+        && request.resource.data.name is string
+        && request.resource.data.name.size() <= 120;
+      allow delete: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow update: if false;
     }
 
     // Discussion messages: signed-in people can read and post. A message can be

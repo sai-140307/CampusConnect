@@ -54,6 +54,22 @@ export interface CampusEvent {
   dressCode?: string;
   eligibility: string; // e.g. "Open to all students"
   attendeeAvatars: string[];
+  /** User id of the organizer who published it. Absent on built-in sample events. */
+  createdBy?: string;
+  createdAt?: number;
+}
+
+/** One person's registration for one occurrence of an event, stored in the shared database. */
+export interface EventRegistration {
+  /** `${eventId}__${date}__${uid}` */
+  id: string;
+  eventId: string;
+  eventDate: string;
+  uid: string;
+  name: string;
+  major?: string;
+  year?: string;
+  createdAt: number;
 }
 
 export interface CampusClub {

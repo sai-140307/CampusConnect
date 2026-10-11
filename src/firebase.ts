@@ -27,7 +27,7 @@ import {
   serverTimestamp
 } from "firebase/firestore";
 import firebaseConfigData from "../firebase-applet-config.json";
-import { ChatMessage, CampusEvent, UserProfile } from "./types";
+import { ChatMessage, CampusEvent, EventRegistration, UserProfile } from "./types";
 
 // Web app's Firebase configuration from provisioning
 const firebaseConfig = {
@@ -239,16 +239,100 @@ export async function updateChatLikeInFirestore(msgId: string, newLikes: number)
   }
 }
 
+// ---------------------------------------------------------------------------
+// Shared events and registrations
+// ---------------------------------------------------------------------------
+
+/** Firestore rejects `undefined`, so drop those fields before writing. */
+function withoutUndefined<T extends object>(value: T): T {
+  return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined)) as T;
+}
+
 /**
- * Removes an expired event from Firestore database permanently
+ * Live list of every event organizers have published. Calls `onUpdate` again
+ * whenever anyone adds, edits or deletes one.
  */
-export async function removeExpiredEventFromFirestore(eventId: string): Promise<void> {
+export function subscribeToEvents(
+  onUpdate: (events: CampusEvent[]) => void,
+  onError?: (error: unknown) => void
+): () => void {
   try {
-    const eventRef = doc(db, 'events', eventId);
-    await deleteDoc(eventRef);
+    return onSnapshot(
+      collection(db, 'events'),
+      (snapshot: any) => {
+        const list: CampusEvent[] = [];
+        snapshot.forEach((d: any) => {
+          const data = d.data();
+          if (data && data.title && data.date && data.startTime) list.push({ ...data, id: d.id } as CampusEvent);
+        });
+        onUpdate(list);
+      },
+      (error: unknown) => {
+        console.warn("Events sync paused:", error);
+        if (onError) onError(error);
+      }
+    );
   } catch (err) {
-    console.warn("Firestore remove event error:", err);
+    console.warn("Events listener setup error:", err);
+    if (onError) onError(err);
+    return () => {};
   }
+}
+
+/** Publish an event for everyone. Throws if the database refuses the write. */
+export async function saveEventToFirestore(event: CampusEvent): Promise<void> {
+  await setDoc(doc(db, 'events', event.id), withoutUndefined(event));
+}
+
+/** Delete a published event. Throws if the database refuses. */
+export async function deleteEventFromFirestore(eventId: string): Promise<void> {
+  await deleteDoc(doc(db, 'events', eventId));
+}
+
+export function registrationId(eventId: string, eventDate: string, uid: string): string {
+  return `${eventId}__${eventDate}__${uid}`;
+}
+
+/**
+ * Live list of every registration. Used for the real "going" count on each
+ * event, for each person's own schedule, and for the organizer's attendee list.
+ */
+export function subscribeToRegistrations(
+  onUpdate: (registrations: EventRegistration[]) => void,
+  onError?: (error: unknown) => void
+): () => void {
+  try {
+    return onSnapshot(
+      collection(db, 'registrations'),
+      (snapshot: any) => {
+        const list: EventRegistration[] = [];
+        snapshot.forEach((d: any) => {
+          const data = d.data();
+          if (data && data.eventId && data.uid) list.push({ ...data, id: d.id } as EventRegistration);
+        });
+        onUpdate(list);
+      },
+      (error: unknown) => {
+        console.warn("Registrations sync paused:", error);
+        if (onError) onError(error);
+      }
+    );
+  } catch (err) {
+    console.warn("Registrations listener setup error:", err);
+    if (onError) onError(err);
+    return () => {};
+  }
+}
+
+/** Register the signed-in person for an event. Throws if the database refuses. */
+export async function registerForEvent(registration: EventRegistration): Promise<void> {
+  const { id, ...data } = registration;
+  await setDoc(doc(db, 'registrations', id), withoutUndefined(data));
+}
+
+/** Cancel a registration. Throws if the database refuses. */
+export async function cancelRegistration(id: string): Promise<void> {
+  await deleteDoc(doc(db, 'registrations', id));
 }
 
 export { onAuthStateChanged };
