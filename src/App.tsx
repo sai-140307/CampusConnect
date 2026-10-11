@@ -1,27 +1,28 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Network, ShieldAlert } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
-import { 
-  CampusEvent, 
-  CampusClub, 
-  CampusResource, 
-  NotificationItem, 
-  ChatMessage, 
-  UserProfile, 
-  AIMatchResult, 
+import {
+  CampusEvent,
+  CampusClub,
+  CampusResource,
+  NotificationItem,
+  ChatMessage,
+  UserProfile,
+  AIMatchResult,
   UserRole,
-  EmailNotificationSettings
+  EmailNotificationSettings,
 } from './types';
 
-import { 
-  MOCK_EVENTS, 
-  MOCK_CLUBS, 
-  MOCK_RESOURCES, 
-  INITIAL_USER, 
-  INITIAL_NOTIFICATIONS, 
-  INITIAL_CHAT_MESSAGES 
+import {
+  MOCK_EVENTS,
+  MOCK_CLUBS,
+  MOCK_RESOURCES,
+  INITIAL_USER,
+  buildInitialNotifications,
+  INITIAL_CHAT_MESSAGES,
 } from './data/mockData';
+import { SEED_CYCLE_START } from './data/mockEvents';
 
 import { requestAIMatch } from './services/aiService';
 import { Navbar } from './components/Navbar';
@@ -42,9 +43,10 @@ import { UserProfileModal } from './components/UserProfileModal';
 import { EmailNotificationModal } from './components/EmailNotificationModal';
 import { CampusVideoShowcase } from './components/CampusVideoShowcase';
 import { AuthScreen } from './components/AuthScreen';
+import { Toast } from './components/Toast';
 
-import { 
-  auth, 
+import {
+  auth,
   db,
   logOutUser,
   onAuthStateChanged,
@@ -53,126 +55,180 @@ import {
   subscribeToCampusChats,
   sendChatMessageToFirestore,
   updateChatLikeInFirestore,
-  removeExpiredEventFromFirestore,
-  FirebaseUser
+  FirebaseUser,
 } from './firebase';
-import { doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { doc, onSnapshot } from 'firebase/firestore';
 
-import { 
-  sendRsvpConfirmationEmail, 
-  sendClubWelcomeEmail 
-} from './services/emailService';
+import { sendRsvpConfirmationEmail, sendClubWelcomeEmail, sendMissedEventEmail } from './services/emailService';
+import { getSentWrapUpKeys, markWrapUpSent, wrapUpKey } from './utils/dateSyncUtils';
+import { compareEventsByStart, eventEndMs, isEventEnded, now as syncedNow } from './utils/campusTime';
+import { useNow } from './hooks/useNow';
+import { useModal } from './hooks/useModal';
+import { readJson, readString, writeJson, writeString } from './utils/storage';
+import { initialsAvatar } from './utils/imageUtils';
 
-import { 
-  processExpiredEventsAndNotify, 
-  isEventExpired 
-} from './utils/dateSyncUtils';
+type Tab = 'explore' | 'events' | 'clubs' | 'resources' | 'map' | 'calendar' | 'faculty';
+type Theme = 'light' | 'dark';
 
 const STORAGE_KEYS = {
-  EVENTS: 'campuspulse_events_v7',
-  CLUBS: 'campuspulse_clubs_v7',
-  RESOURCES: 'campuspulse_resources_v7',
-  USER: 'campuspulse_user_v7',
-  NOTIFICATIONS: 'campuspulse_notifications_v7',
-  MESSAGES: 'campuspulse_messages_v7',
-  ROLE: 'campuspulse_active_role_v7',
+  CUSTOM_EVENTS: 'campusconnect_custom_events_v1',
+  USER: 'campusconnect_user_v1',
+  NOTIFICATIONS: 'campusconnect_notifications_v1',
+  MESSAGES: 'campusconnect_messages_v1',
+  SEED_CYCLE: 'campusconnect_seed_cycle_v1',
+  THEME: 'campusconnect_theme_v1',
 };
 
+const SEED_EVENT_IDS = new Set(MOCK_EVENTS.map((e) => e.id));
+const DAY_MS = 86_400_000;
+
+const DEFAULT_EMAIL_SETTINGS: EmailNotificationSettings = {
+  enabled: true,
+  recipientEmail: '',
+  notifyOnRsvp: true,
+  notifyOnMissedEvent: true,
+  notify24hBefore: true,
+  notify1hBefore: true,
+  notifyClubAnnouncements: true,
+  notifyAiDigest: true,
+};
+
+const asStringArray = (value: unknown, fallback: string[] = []): string[] =>
+  Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : fallback;
+
+/** Build a complete, well-formed profile from whatever was stored or synced. */
+function normalizeProfile(base: UserProfile, incoming: Partial<UserProfile> | null | undefined): UserProfile {
+  const data = incoming || {};
+  return {
+    ...base,
+    ...data,
+    name: (typeof data.name === 'string' && data.name.trim()) || base.name,
+    role: data.role === 'organizer' || data.role === 'student' ? data.role : base.role,
+    rsvpdEvents: asStringArray(data.rsvpdEvents, base.rsvpdEvents),
+    savedEvents: asStringArray(data.savedEvents, base.savedEvents),
+    joinedClubs: asStringArray(data.joinedClubs, base.joinedClubs),
+    savedResources: asStringArray(data.savedResources, base.savedResources),
+    interests: asStringArray(data.interests, base.interests),
+    preferredPerks: Array.isArray(data.preferredPerks) ? data.preferredPerks : base.preferredPerks,
+    emailSettings: { ...DEFAULT_EMAIL_SETTINGS, ...(base.emailSettings || {}), ...(data.emailSettings || {}) },
+  };
+}
+
+/** The fields that are kept in the cloud, in a stable order so they can be compared. */
+function cloudProfileFields(profile: UserProfile) {
+  return {
+    name: profile.name,
+    email: profile.email || '',
+    major: profile.major,
+    year: profile.year,
+    campusZone: profile.campusZone,
+    role: profile.role,
+    interests: profile.interests,
+    preferredPerks: profile.preferredPerks,
+    rsvpdEvents: profile.rsvpdEvents,
+    savedEvents: profile.savedEvents,
+    joinedClubs: profile.joinedClubs,
+    savedResources: profile.savedResources,
+    emailSettings: profile.emailSettings || DEFAULT_EMAIL_SETTINGS,
+    seedCycle: SEED_CYCLE_START,
+  };
+}
+
+/** RSVPs to sample events belong to one schedule cycle; drop them when a new cycle starts. */
+function dropStaleSeedEvents(profile: UserProfile, cycle: string | null | undefined): UserProfile {
+  if (!cycle || cycle === SEED_CYCLE_START) return profile;
+  return {
+    ...profile,
+    rsvpdEvents: profile.rsvpdEvents.filter((id) => !SEED_EVENT_IDS.has(id)),
+    savedEvents: profile.savedEvents.filter((id) => !SEED_EVENT_IDS.has(id)),
+  };
+}
+
+function loadInitialProfile(): UserProfile {
+  const stored = readJson<Partial<UserProfile> | null>(STORAGE_KEYS.USER, null);
+  const profile = normalizeProfile(INITIAL_USER, stored);
+  return dropStaleSeedEvents(profile, readString(STORAGE_KEYS.SEED_CYCLE));
+}
+
+function loadInitialEvents(profile: UserProfile): CampusEvent[] {
+  const mine = new Set(profile.rsvpdEvents);
+  const seed = MOCK_EVENTS.map((e) => (mine.has(e.id) ? { ...e, rsvpCount: e.rsvpCount + 1 } : e));
+  const stored = readJson<CampusEvent[]>(STORAGE_KEYS.CUSTOM_EVENTS, []);
+  const cutoff = syncedNow() - 30 * DAY_MS;
+  const custom = (Array.isArray(stored) ? stored : []).filter(
+    (e) => e && typeof e.id === 'string' && !SEED_EVENT_IDS.has(e.id) && e.date && e.startTime && eventEndMs(e) > cutoff
+  );
+  return [...custom, ...seed];
+}
+
+function dedupeById<T extends { id: string }>(items: T[]): T[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    if (!item || !item.id || seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
+}
+
+const newId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
 export default function App() {
-  // Navigation State
-  const [activeTab, setActiveTab] = useState<'explore' | 'events' | 'clubs' | 'resources' | 'map' | 'calendar' | 'faculty'>('explore');
-  
-  // Firebase Auth State
+  const now = useNow();
+
+  const [activeTab, setActiveTab] = useState<Tab>('explore');
+
+  // Theme
+  const [theme, setTheme] = useState<Theme>(() => {
+    const saved = readString(STORAGE_KEYS.THEME);
+    if (saved === 'light' || saved === 'dark') return saved;
+    return typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches
+      ? 'dark'
+      : 'light';
+  });
+
+  useEffect(() => {
+    document.body.classList.toggle('dark', theme === 'dark');
+    document.documentElement.style.colorScheme = theme;
+    writeString(STORAGE_KEYS.THEME, theme);
+  }, [theme]);
+
+  // A new page starts at the top.
+  useEffect(() => {
+    window.scrollTo({ top: 0 });
+  }, [activeTab]);
+
+  // Auth
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
-  const [isAuthChecking, setIsAuthChecking] = useState<boolean>(true);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
+  /** Role chosen (and verified) on the sign-in screen, applied when sign-in completes. */
+  const pendingRoleRef = useRef<UserRole | null>(null);
 
-  // Data State with Local Storage fallback
-  const [events, setEvents] = useState<CampusEvent[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.EVENTS);
-    return saved ? JSON.parse(saved) : MOCK_EVENTS;
-  });
-
+  // Data
+  const [userProfile, setUserProfile] = useState<UserProfile>(loadInitialProfile);
+  const [events, setEvents] = useState<CampusEvent[]>(() => loadInitialEvents(loadInitialProfile()));
   const [clubs, setClubs] = useState<CampusClub[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.CLUBS);
-    return saved ? JSON.parse(saved) : MOCK_CLUBS;
+    const joined = new Set(loadInitialProfile().joinedClubs);
+    return MOCK_CLUBS.map((c) => (joined.has(c.id) ? { ...c, membersCount: c.membersCount + 1 } : c));
   });
+  const resources: CampusResource[] = MOCK_RESOURCES;
 
-  const [resources, setResources] = useState<CampusResource[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.RESOURCES);
-    return saved ? JSON.parse(saved) : MOCK_RESOURCES;
-  });
-
-  const [userProfile, setUserProfile] = useState<UserProfile>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.USER);
-    const savedRole = (localStorage.getItem(STORAGE_KEYS.ROLE) as UserRole) || 'student';
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        return { 
-          ...INITIAL_USER, 
-          ...parsed, 
-          role: parsed.role || savedRole,
-          rsvpdEvents: Array.isArray(parsed.rsvpdEvents) ? parsed.rsvpdEvents : INITIAL_USER.rsvpdEvents,
-          savedEvents: Array.isArray(parsed.savedEvents) ? parsed.savedEvents : INITIAL_USER.savedEvents,
-          joinedClubs: Array.isArray(parsed.joinedClubs) ? parsed.joinedClubs : INITIAL_USER.joinedClubs,
-          savedResources: Array.isArray(parsed.savedResources) ? parsed.savedResources : INITIAL_USER.savedResources,
-          interests: Array.isArray(parsed.interests) ? parsed.interests : INITIAL_USER.interests,
-          preferredPerks: Array.isArray(parsed.preferredPerks) ? parsed.preferredPerks : INITIAL_USER.preferredPerks,
-          emailSettings: {
-            ...INITIAL_USER.emailSettings,
-            ...(parsed.emailSettings || {})
-          }
-        };
-      } catch {
-        return { ...INITIAL_USER, role: savedRole };
-      }
-    }
-    return { ...INITIAL_USER, role: savedRole };
-  });
-
-  // Notifications State with deduplication
   const [notifications, setNotifications] = useState<NotificationItem[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.NOTIFICATIONS);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          const seen = new Set<string>();
-          return parsed.filter((n) => {
-            if (!n || !n.id || seen.has(n.id)) return false;
-            seen.add(n.id);
-            return true;
-          });
-        }
-        return INITIAL_NOTIFICATIONS;
-      } catch {
-        return INITIAL_NOTIFICATIONS;
-      }
-    }
-    return INITIAL_NOTIFICATIONS;
+    const stored = readJson<NotificationItem[] | null>(STORAGE_KEYS.NOTIFICATIONS, null);
+    return Array.isArray(stored) ? dedupeById(stored) : buildInitialNotifications(MOCK_EVENTS);
   });
 
-  // Synchronized Multi-Student Chat State
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.MESSAGES);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      } catch {
-        return INITIAL_CHAT_MESSAGES;
-      }
-    }
-    return INITIAL_CHAT_MESSAGES;
+    const stored = readJson<ChatMessage[] | null>(STORAGE_KEYS.MESSAGES, null);
+    return Array.isArray(stored) ? dedupeById(stored) : INITIAL_CHAT_MESSAGES;
   });
 
-  // AI Matchmaker State
+  // AI matchmaker
   const [aiMatchResult, setAiMatchResult] = useState<AIMatchResult | null>(null);
   const [isAiMatching, setIsAiMatching] = useState(false);
 
-  // Modals State
-  const [selectedEvent, setSelectedEvent] = useState<CampusEvent | null>(null);
-  const [selectedClub, setSelectedClub] = useState<CampusClub | null>(null);
+  // Dialogs
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [selectedClubId, setSelectedClubId] = useState<string | null>(null);
   const [selectedResource, setSelectedResource] = useState<CampusResource | null>(null);
   const [chatTarget, setChatTarget] = useState<{ id: string; type: 'event' | 'club'; title: string } | null>(null);
   const [isFacultyModalOpen, setIsFacultyModalOpen] = useState(false);
@@ -181,467 +237,514 @@ export default function App() {
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
   const [isRestrictedModalOpen, setIsRestrictedModalOpen] = useState(false);
   const [isVideoShowcaseOpen, setIsVideoShowcaseOpen] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
 
-  // Persist State locally
+  // Always read the selected event and club from the live lists, so an open
+  // dialog shows current counts instead of a stale copy.
+  const selectedEvent = useMemo(
+    () => (selectedEventId ? events.find((e) => e.id === selectedEventId) || null : null),
+    [events, selectedEventId]
+  );
+  const selectedClub = useMemo(
+    () => (selectedClubId ? clubs.find((c) => c.id === selectedClubId) || null : null),
+    [clubs, selectedClubId]
+  );
+
+  const upcomingEvents = useMemo(
+    () => events.filter((e) => !isEventEnded(e, now)).sort(compareEventsByStart),
+    [events, now]
+  );
+
+  const activeEmail = firebaseUser?.email || userProfile.email || userProfile.emailSettings?.recipientEmail || '';
+
+  // ---- Persistence -------------------------------------------------------
+
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.EVENTS, JSON.stringify(events));
+    writeJson(
+      STORAGE_KEYS.CUSTOM_EVENTS,
+      events.filter((e) => !SEED_EVENT_IDS.has(e.id))
+    );
   }, [events]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.CLUBS, JSON.stringify(clubs));
-  }, [clubs]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.RESOURCES, JSON.stringify(resources));
-  }, [resources]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(userProfile));
-    if (userProfile.role) {
-      localStorage.setItem(STORAGE_KEYS.ROLE, userProfile.role);
-    }
+    writeJson(STORAGE_KEYS.USER, userProfile);
+    writeString(STORAGE_KEYS.SEED_CYCLE, SEED_CYCLE_START);
   }, [userProfile]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(notifications));
+    writeJson(STORAGE_KEYS.NOTIFICATIONS, notifications.slice(0, 100));
   }, [notifications]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(messages));
+    writeJson(STORAGE_KEYS.MESSAGES, messages.slice(0, 300));
   }, [messages]);
 
-  // Real-Time Multi-Student Firestore Chat Sync
-  useEffect(() => {
-    const unsubChats = subscribeToCampusChats((remoteMsgs) => {
-      if (remoteMsgs && remoteMsgs.length > 0) {
-        setMessages((prev) => {
-          // Merge remote with local seed to ensure full history
-          const remoteIds = new Set(remoteMsgs.map((m) => m.id));
-          const localExtras = prev.filter((m) => !remoteIds.has(m.id));
-          return [...remoteMsgs, ...localExtras];
-        });
-      }
-    });
+  // ---- Toast -------------------------------------------------------------
 
-    return () => {
-      if (unsubChats) unsubChats();
-    };
+  const showToast = useCallback((message: string) => {
+    setToast({ id: Date.now() + Math.random(), message });
   }, []);
 
-  // Periodic and on-mount Event Deadline Expiration Check & Database Cleanup
+  const dismissToast = useCallback(() => setToast(null), []);
+
+  // ---- Live chat sync ----------------------------------------------------
+
+  // Subscribes once someone is signed in: the database only lets signed-in people read messages.
+  const signedInUid = firebaseUser?.uid;
   useEffect(() => {
-    const runExpirationSync = () => {
-      const activeUserEmail = userProfile.email || firebaseUser?.email || 'saikanala1403@gmail.com';
-      
-      const expiredIdsToRemove = processExpiredEventsAndNotify(
-        events,
-        userProfile.rsvpdEvents,
-        activeUserEmail,
-        userProfile,
-        (notif) => {
-          setNotifications((prev) => {
-            // Deduplicate by ID and semantic title
-            if (prev.some((n) => n.id === notif.id || (n.eventId === notif.eventId && n.type === notif.type))) {
-              return prev;
-            }
-            return [notif, ...prev];
-          });
-        }
-      );
-
-      // If any events expired, remove them permanently from active database & state
-      if (expiredIdsToRemove.length > 0) {
-        setEvents((prev) => (prev || []).filter((ev) => !expiredIdsToRemove.includes(ev.id)));
-        
-        // Remove from RSVP list as well
-        setUserProfile((prev) => ({
-          ...prev,
-          rsvpdEvents: (prev.rsvpdEvents || []).filter((id) => !expiredIdsToRemove.includes(id)),
-          savedEvents: (prev.savedEvents || []).filter((id) => !expiredIdsToRemove.includes(id)),
-        }));
-
-        // Clean up each from Firestore
-        expiredIdsToRemove.forEach((id) => {
-          removeExpiredEventFromFirestore(id);
-        });
-      }
+    if (!signedInUid) return;
+    const unsubscribe = subscribeToCampusChats((remote) => {
+      if (!remote || remote.length === 0) return;
+      setMessages((prev) => {
+        const likedByMe = new Set(prev.filter((m) => m.isLikedByMe).map((m) => m.id));
+        const remoteIds = new Set(remote.map((m) => m.id));
+        const merged = [
+          ...remote.map((m) => (likedByMe.has(m.id) ? { ...m, isLikedByMe: true } : m)),
+          ...prev.filter((m) => !remoteIds.has(m.id)),
+        ];
+        return merged.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      });
+    });
+    return () => {
+      if (unsubscribe) unsubscribe();
     };
+  }, [signedInUid]);
 
-    runExpirationSync();
-    const interval = setInterval(runExpirationSync, 45000); // Check every 45s
-    return () => clearInterval(interval);
-  }, [events, userProfile.rsvpdEvents, userProfile.email, firebaseUser?.email]);
+  // ---- Wrap-up notices for events the student attended --------------------
 
-  // Firebase Auth State Listener & Firestore Profile Sync
+  const addNotification = useCallback((notif: NotificationItem) => {
+    setNotifications((prev) => (prev.some((n) => n.id === notif.id) ? prev : [notif, ...prev]));
+  }, []);
+
   useEffect(() => {
-    let firestoreUnsub: (() => void) | null = null;
+    if (userProfile.rsvpdEvents.length === 0) return;
+    const mine = new Set(userProfile.rsvpdEvents);
+    const alreadySent = new Set(getSentWrapUpKeys());
 
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    events.forEach((ev) => {
+      if (!mine.has(ev.id) || !isEventEnded(ev, now)) return;
+      const key = wrapUpKey(ev);
+      if (alreadySent.has(key)) return;
+      markWrapUpSent(key);
+
+      addNotification({
+        id: `wrap-up-${key}`,
+        title: `Wrapped up: ${ev.title}`,
+        body: `${ev.title} has ended. The attendee discussion stays open if you want to follow up.`,
+        timestamp: 'Just now',
+        createdAt: Math.min(syncedNow(), eventEndMs(ev)),
+        isRead: false,
+        type: 'reminder',
+        eventId: ev.id,
+      });
+
+      const emailOn =
+        userProfile.emailSettings?.enabled !== false && userProfile.emailSettings?.notifyOnMissedEvent !== false;
+      if (emailOn && activeEmail) sendMissedEventEmail(userProfile, ev, activeEmail);
+    });
+    // Runs on each clock tick; the profile object itself is intentionally not a dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [now, events, userProfile.rsvpdEvents, activeEmail]);
+
+  // ---- Auth + cloud profile ----------------------------------------------
+
+  /** JSON of the profile as last seen in / written to the cloud. Prevents write loops. */
+  const lastCloudProfileRef = useRef<string>('');
+  const cloudReadyRef = useRef(false);
+
+  useEffect(() => {
+    let unsubscribeProfile: (() => void) | null = null;
+    let cancelled = false;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user: FirebaseUser | null) => {
+      if (unsubscribeProfile) {
+        unsubscribeProfile();
+        unsubscribeProfile = null;
+      }
+      cloudReadyRef.current = false;
+      lastCloudProfileRef.current = '';
       setFirebaseUser(user);
-      if (user && user.email) {
-        // Fetch existing cloud profile from Firestore
-        const cloudData = await fetchUserProfileFromFirestore(user.uid);
-        if (cloudData) {
-          setUserProfile((prev) => ({
-            ...prev,
-            ...cloudData,
-            rsvpdEvents: Array.isArray(cloudData.rsvpdEvents) ? cloudData.rsvpdEvents : (prev.rsvpdEvents || []),
-            savedEvents: Array.isArray(cloudData.savedEvents) ? cloudData.savedEvents : (prev.savedEvents || []),
-            joinedClubs: Array.isArray(cloudData.joinedClubs) ? cloudData.joinedClubs : (prev.joinedClubs || []),
-            savedResources: Array.isArray(cloudData.savedResources) ? cloudData.savedResources : (prev.savedResources || []),
-            interests: Array.isArray(cloudData.interests) ? cloudData.interests : (prev.interests || []),
-            preferredPerks: Array.isArray(cloudData.preferredPerks) ? cloudData.preferredPerks : (prev.preferredPerks || []),
-            email: user.email || prev.email,
-            name: user.displayName || cloudData.name || prev.name,
-            emailSettings: {
-              ...prev.emailSettings,
-              recipientEmail: user.email || prev.emailSettings?.recipientEmail || 'saikanala1403@gmail.com'
-            }
-          }));
-        } else {
-          // Sync current profile to Firestore with real email
-          syncUserProfileToFirestore(user.uid, {
-            email: user.email,
-            name: user.displayName || user.email.split('@')[0],
-            major: userProfile.major || 'Computer Science & Engineering',
-            graduationYear: userProfile.graduationYear || '2026',
-            role: userProfile.role || 'student',
-            emailSettings: {
-              recipientEmail: user.email,
-              enabled: true
-            }
-          });
-        }
 
-        // Setup real-time listener for user profile updates
-        try {
-          firestoreUnsub = onSnapshot(doc(db, 'users', user.uid), (docSnap) => {
-            if (docSnap.exists()) {
-              const data = docSnap.data();
-              setUserProfile((prev) => ({
-                ...prev,
-                ...data,
-                rsvpdEvents: Array.isArray(data.rsvpdEvents) ? data.rsvpdEvents : (prev.rsvpdEvents || []),
-                savedEvents: Array.isArray(data.savedEvents) ? data.savedEvents : (prev.savedEvents || []),
-                joinedClubs: Array.isArray(data.joinedClubs) ? data.joinedClubs : (prev.joinedClubs || []),
-                savedResources: Array.isArray(data.savedResources) ? data.savedResources : (prev.savedResources || []),
-                interests: Array.isArray(data.interests) ? data.interests : (prev.interests || []),
-                preferredPerks: Array.isArray(data.preferredPerks) ? data.preferredPerks : (prev.preferredPerks || []),
-                email: user.email || prev.email,
-              }));
-            }
-          });
-        } catch (e) {
-          console.warn("Firestore snapshot error:", e);
-        }
+      if (!user) {
+        setIsAuthChecking(false);
+        return;
       }
+
+      const cloud = await fetchUserProfileFromFirestore(user.uid);
+      if (cancelled) return;
+
+      const verifiedRole = pendingRoleRef.current;
+      pendingRoleRef.current = null;
+      const fallbackName = user.displayName || (user.email ? user.email.split('@')[0] : '');
+
+      setUserProfile((prev) => {
+        // A different account signed in on this device: start from a clean profile.
+        const base = prev.email && user.email && prev.email !== user.email ? INITIAL_USER : prev;
+        let next = normalizeProfile(base, cloud as Partial<UserProfile> | null);
+        next = dropStaleSeedEvents(next, cloud?.seedCycle);
+        next.email = user.email || next.email;
+        if (!cloud?.name && fallbackName && (next.name === INITIAL_USER.name || !next.name)) next.name = fallbackName;
+        // Organizer access is granted on sign-in (with the passcode) and then remembered.
+        // If the cloud profile could not be read, keep the role this device already had
+        // rather than silently demoting (and then overwriting) an organizer.
+        const knownOrganizer = cloud ? cloud.role === 'organizer' : base.role === 'organizer';
+        next.role = verifiedRole === 'organizer' || knownOrganizer ? 'organizer' : 'student';
+        next.emailSettings = {
+          ...DEFAULT_EMAIL_SETTINGS,
+          ...next.emailSettings,
+          recipientEmail: next.emailSettings?.recipientEmail || user.email || '',
+        };
+        return next;
+      });
+
+      cloudReadyRef.current = true;
       setIsAuthChecking(false);
+
+      try {
+        unsubscribeProfile = onSnapshot(
+          doc(db, 'users', user.uid),
+          (snap: any) => {
+            // Skip echoes of our own pending writes.
+            if (!snap.exists() || snap.metadata?.hasPendingWrites) return;
+            const data = snap.data() as Partial<UserProfile> & { seedCycle?: string };
+            setUserProfile((prev) => {
+              const merged = dropStaleSeedEvents(normalizeProfile(prev, data), data.seedCycle);
+              merged.email = user.email || merged.email;
+              const mergedJson = JSON.stringify(cloudProfileFields(merged));
+              lastCloudProfileRef.current = mergedJson;
+              return mergedJson === JSON.stringify(cloudProfileFields(prev)) ? prev : merged;
+            });
+          },
+          (err: unknown) => console.warn('Profile sync paused:', err)
+        );
+      } catch (err) {
+        console.warn('Profile sync unavailable:', err);
+      }
     });
 
     return () => {
-      unsubscribe();
-      if (firestoreUnsub) firestoreUnsub();
+      cancelled = true;
+      unsubscribeAuth();
+      if (unsubscribeProfile) unsubscribeProfile();
     };
   }, []);
 
-  const showToast = useCallback((msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3500);
-  }, []);
+  // Push local profile changes (RSVPs, clubs, preferences) to the cloud so
+  // they follow the student across devices. Debounced, and skipped when the
+  // cloud already has the same data.
+  useEffect(() => {
+    if (!firebaseUser?.uid || !cloudReadyRef.current) return;
+    const fields = cloudProfileFields(userProfile);
+    const json = JSON.stringify(fields);
+    if (json === lastCloudProfileRef.current) return;
+
+    const uid = firebaseUser.uid;
+    const timer = setTimeout(() => {
+      lastCloudProfileRef.current = json;
+      void syncUserProfileToFirestore(uid, fields);
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [userProfile, firebaseUser?.uid]);
 
   const handleLogout = async () => {
-    await logOutUser();
-    setFirebaseUser(null);
-    showToast('Signed out of account');
+    const result = await logOutUser();
+    if (!result.success) {
+      showToast('Could not sign out. Check your connection and try again.');
+      return;
+    }
+    setActiveTab('explore');
+    showToast('Signed out.');
   };
 
-  // AI Match Search Handler
+  // ---- Actions -----------------------------------------------------------
+
   const handleAIMatchSearch = async (query: string) => {
     setIsAiMatching(true);
     try {
-      const result = await requestAIMatch(query, events, clubs, resources, userProfile);
+      const result = await requestAIMatch(query, upcomingEvents, clubs, resources, userProfile);
       setAiMatchResult(result);
-      showToast(`AI Matchmaker found ${result.matchedEvents.length} events & ${result.matchedClubs.length} clubs.`);
+      const total = result.matchedEvents.length + result.matchedClubs.length + result.matchedResources.length;
+      showToast(total > 0 ? `Found ${total} matches.` : 'No matches found. Try different words.');
     } catch (e) {
       console.error(e);
-      showToast('Error generating AI match results. Please try again.');
+      showToast('Search failed. Try again.');
     } finally {
       setIsAiMatching(false);
     }
   };
 
-  // RSVP Toggle Handler with Email confirmation
-  const handleToggleRsvp = (eventId: string) => {
-    const targetEvent = events.find((e) => e.id === eventId);
-    const isCurrentlyRsvpd = (userProfile.rsvpdEvents || []).includes(eventId);
-    let updatedRsvps: string[];
+  const handleToggleRsvp = useCallback(
+    (eventId: string) => {
+      const target = events.find((e) => e.id === eventId);
+      if (!target) return;
+      const wasGoing = userProfile.rsvpdEvents.includes(eventId);
 
-    if (isCurrentlyRsvpd) {
-      updatedRsvps = (userProfile.rsvpdEvents || []).filter((id) => id !== eventId);
-      setEvents((prev) =>
-        (prev || []).map((e) => (e.id === eventId ? { ...e, rsvpCount: Math.max(0, e.rsvpCount - 1) } : e))
-      );
-      showToast('RSVP removed from your schedule.');
-    } else {
-      updatedRsvps = [...(userProfile.rsvpdEvents || []), eventId];
-      setEvents((prev) =>
-        (prev || []).map((e) => (e.id === eventId ? { ...e, rsvpCount: e.rsvpCount + 1 } : e))
-      );
-      confetti({ particleCount: 35, spread: 50 });
-      showToast('RSVP confirmed! Digital ticket dispatched.');
-
-      // Dispatch Email Confirmation to user's real email
-      if (targetEvent && userProfile.emailSettings?.notifyOnRsvp !== false) {
-        const destEmail = userProfile.email || firebaseUser?.email || userProfile.emailSettings?.recipientEmail || 'saikanala1403@gmail.com';
-        sendRsvpConfirmationEmail(userProfile, targetEvent, destEmail);
+      if (!wasGoing && isEventEnded(target, syncedNow())) {
+        showToast('This event has already ended.');
+        return;
       }
-    }
-
-    setUserProfile((prev) => ({
-      ...prev,
-      rsvpdEvents: updatedRsvps,
-    }));
-  };
-
-  // Club Join Handler with Email welcome
-  const handleToggleJoinClub = (clubId: string) => {
-    const targetClub = clubs.find((c) => c.id === clubId);
-    const isJoined = (userProfile.joinedClubs || []).includes(clubId);
-    let updatedClubs: string[];
-
-    if (isJoined) {
-      updatedClubs = (userProfile.joinedClubs || []).filter((id) => id !== clubId);
-      setClubs((prev) =>
-        (prev || []).map((c) => (c.id === clubId ? { ...c, membersCount: Math.max(0, c.membersCount - 1) } : c))
-      );
-      showToast('Left club community.');
-    } else {
-      updatedClubs = [...(userProfile.joinedClubs || []), clubId];
-      setClubs((prev) =>
-        (prev || []).map((c) => (c.id === clubId ? { ...c, membersCount: c.membersCount + 1 } : c))
-      );
-      confetti({ particleCount: 35, spread: 50 });
-      showToast('Joined club! Welcome packet dispatched to your email.');
-
-      // Dispatch Club Welcome Email
-      if (targetClub && userProfile.emailSettings?.notifyClubAnnouncements !== false) {
-        const destEmail = userProfile.email || firebaseUser?.email || userProfile.emailSettings?.recipientEmail || 'saikanala1403@gmail.com';
-        sendClubWelcomeEmail(userProfile, targetClub, destEmail);
+      if (!wasGoing && target.rsvpCount >= target.capacity) {
+        showToast('This event is full.');
+        return;
       }
-    }
 
-    setUserProfile((prev) => ({
-      ...prev,
-      joinedClubs: updatedClubs,
-    }));
+      setUserProfile((prev) => ({
+        ...prev,
+        rsvpdEvents: wasGoing
+          ? prev.rsvpdEvents.filter((id) => id !== eventId)
+          : Array.from(new Set([...prev.rsvpdEvents, eventId])),
+      }));
+      setEvents((prev) =>
+        prev.map((e) => (e.id === eventId ? { ...e, rsvpCount: Math.max(0, e.rsvpCount + (wasGoing ? -1 : 1)) } : e))
+      );
+
+      if (wasGoing) {
+        showToast('RSVP cancelled.');
+        return;
+      }
+
+      confetti({ particleCount: 40, spread: 60, origin: { y: 0.75 }, disableForReducedMotion: true });
+      const emailOn = userProfile.emailSettings?.enabled !== false && userProfile.emailSettings?.notifyOnRsvp !== false;
+      if (emailOn && activeEmail) {
+        sendRsvpConfirmationEmail(userProfile, target, activeEmail);
+        showToast('RSVP confirmed. Your ticket is in the email center.');
+      } else {
+        showToast('RSVP confirmed.');
+      }
+    },
+    [events, userProfile, activeEmail, showToast]
+  );
+
+  const handleToggleJoinClub = useCallback(
+    (clubId: string) => {
+      const target = clubs.find((c) => c.id === clubId);
+      if (!target) return;
+      const wasMember = userProfile.joinedClubs.includes(clubId);
+
+      setUserProfile((prev) => ({
+        ...prev,
+        joinedClubs: wasMember
+          ? prev.joinedClubs.filter((id) => id !== clubId)
+          : Array.from(new Set([...prev.joinedClubs, clubId])),
+      }));
+      setClubs((prev) =>
+        prev.map((c) => (c.id === clubId ? { ...c, membersCount: Math.max(0, c.membersCount + (wasMember ? -1 : 1)) } : c))
+      );
+
+      if (wasMember) {
+        showToast(`You left ${target.name}.`);
+        return;
+      }
+
+      confetti({ particleCount: 40, spread: 60, origin: { y: 0.75 }, disableForReducedMotion: true });
+      const emailOn =
+        userProfile.emailSettings?.enabled !== false && userProfile.emailSettings?.notifyClubAnnouncements !== false;
+      if (emailOn && activeEmail) sendClubWelcomeEmail(userProfile, target, activeEmail);
+      showToast(`You joined ${target.name}.`);
+    },
+    [clubs, userProfile, activeEmail, showToast]
+  );
+
+  const handleToggleSaveResource = useCallback(
+    (resId: string) => {
+      const wasSaved = userProfile.savedResources.includes(resId);
+      setUserProfile((prev) => ({
+        ...prev,
+        savedResources: wasSaved
+          ? prev.savedResources.filter((id) => id !== resId)
+          : Array.from(new Set([...prev.savedResources, resId])),
+      }));
+      showToast(wasSaved ? 'Bookmark removed.' : 'Saved to your profile.');
+    },
+    [userProfile.savedResources, showToast]
+  );
+
+  const postMessage = useCallback(
+    async (target: { id: string; type: 'event' | 'club' }, text: string, tag?: ChatMessage['tag']) => {
+      const senderName = userProfile.name || (activeEmail ? activeEmail.split('@')[0] : 'Student');
+      const message: ChatMessage = {
+        id: newId('msg'),
+        targetId: target.id,
+        targetType: target.type,
+        senderName,
+        senderAvatar: initialsAvatar(senderName),
+        senderRole: userProfile.role === 'organizer' ? 'organizer' : 'student',
+        text,
+        timestamp: 'Just now',
+        createdAt: syncedNow(),
+        likes: 0,
+        tag: tag || 'general',
+      };
+      // Show it immediately, then save it for everyone else.
+      setMessages((prev) => [message, ...prev]);
+      await sendChatMessageToFirestore(message);
+    },
+    [userProfile.name, userProfile.role, activeEmail]
+  );
+
+  const handleToggleLikeMessage = useCallback(
+    (msgId: string) => {
+      const target = messages.find((m) => m.id === msgId);
+      if (!target) return;
+      const likes = Math.max(0, target.likes + (target.isLikedByMe ? -1 : 1));
+      setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, isLikedByMe: !target.isLikedByMe, likes } : m)));
+      void updateChatLikeInFirestore(msgId, likes);
+    },
+    [messages]
+  );
+
+  const requireOrganizer = (): boolean => {
+    if (userProfile.role === 'organizer') return true;
+    setIsRestrictedModalOpen(true);
+    return false;
   };
 
-  // Save Resource Handler
-  const handleToggleSaveResource = (resId: string) => {
-    const isSaved = (userProfile.savedResources || []).includes(resId);
-    let updatedRes: string[];
-
-    if (isSaved) {
-      updatedRes = (userProfile.savedResources || []).filter((id) => id !== resId);
-      showToast('Removed resource bookmark.');
-    } else {
-      updatedRes = [...(userProfile.savedResources || []), resId];
-      showToast('Resource bookmarked to your profile.');
-    }
-
-    setUserProfile((prev) => ({
-      ...prev,
-      savedResources: updatedRes,
-    }));
-  };
-
-  // Real-time Chat message send handler - saved to Cloud Firestore
-  const handleSendMessage = async (text: string, tag?: ChatMessage['tag']) => {
-    if (!chatTarget) return;
-    const newMsg: ChatMessage = {
-      id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-      targetId: chatTarget.id,
-      targetType: chatTarget.type,
-      senderName: userProfile.name || (userProfile.email ? userProfile.email.split('@')[0] : 'Student'),
-      senderAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
-      senderRole: userProfile.role === 'organizer' ? 'organizer' : 'student',
-      text,
-      timestamp: 'Just now',
-      createdAt: Date.now(),
-      likes: 0,
-      tag: tag || 'general',
-    };
-    
-    // Update local state instantly for zero-latency feedback
-    setMessages((prev) => [newMsg, ...prev]);
-    
-    // Persist to Cloud Firestore for multi-student live broadcast
-    await sendChatMessageToFirestore(newMsg);
-    
-    showToast('Message posted to attendee discussion.');
-  };
-
-  const handleToggleLikeMessage = async (msgId: string) => {
-    let targetNewLikes = 0;
-    setMessages((prev) =>
-      prev.map((m) => {
-        if (m.id === msgId) {
-          const isLiked = m.isLikedByMe;
-          targetNewLikes = isLiked ? Math.max(0, m.likes - 1) : m.likes + 1;
-          return {
-            ...m,
-            isLikedByMe: !isLiked,
-            likes: targetNewLikes,
-          };
-        }
-        return m;
-      })
-    );
-
-    // Sync likes to Cloud Firestore
-    await updateChatLikeInFirestore(msgId, targetNewLikes);
-  };
-
-  // Create Event Handler (Organizer Only)
-  const handleCreateEvent = (newEventData: Partial<CampusEvent>) => {
-    if (userProfile.role !== 'organizer') {
-      setIsRestrictedModalOpen(true);
-      return;
-    }
+  const handleCreateEvent = (draft: Partial<CampusEvent>) => {
+    if (!requireOrganizer()) return;
 
     const created: CampusEvent = {
-      id: `ev-${Date.now()}`,
-      title: newEventData.title || 'Campus Event',
-      shortDesc: newEventData.shortDesc || '',
-      description: newEventData.description || '',
-      category: newEventData.category || 'Academic & STEM',
-      organizer: newEventData.organizer || 'Student Organization',
-      organizerRole: 'faculty',
-      building: newEventData.building || 'Student Union',
-      room: newEventData.room || 'Room 101',
+      shortDesc: '',
+      description: '',
+      category: 'Academic & STEM',
+      organizer: 'Student Organization',
+      organizerRole: 'student_club',
+      building: 'Student Union Center',
+      room: 'Room 101',
       mapCoords: { x: 50, y: 50 },
-      date: newEventData.date || '2026-08-20',
-      startTime: newEventData.startTime || '17:00',
-      endTime: newEventData.endTime || '19:00',
-      displayTime: newEventData.displayTime || 'Upcoming',
-      isToday: false,
-      perks: newEventData.perks || ['Free Food 🍕'],
-      foodDetails: newEventData.foodDetails,
-      tags: newEventData.tags || ['Campus'],
-      image: newEventData.image || 'https://images.unsplash.com/photo-1523240795612-9a054b0db644?w=800&auto=format&fit=crop&q=80',
-      gradient: 'from-orange-800 to-amber-900',
-      rsvpCount: 1,
-      capacity: newEventData.capacity || 100,
-      isHot: true,
+      startTime: '17:00',
+      endTime: '19:00',
+      perks: [],
+      tags: ['Campus'],
+      image: 'https://images.unsplash.com/photo-1523240795612-9a054b0db644?w=800&auto=format&fit=crop&q=80',
+      gradient: 'from-indigo-800 to-slate-900',
+      rsvpCount: 0,
+      capacity: 100,
+      isHot: false,
       facultyApproved: true,
-      eligibility: 'All Students',
-      attendeeAvatars: ['https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80'],
+      eligibility: 'All students',
+      attendeeAvatars: [],
       campusZone: 'Central Hub',
-      ...newEventData,
-    } as CampusEvent;
+      ...draft,
+      id: newId('ev'),
+      title: (draft.title || 'Campus event').trim(),
+      date: draft.date || '',
+    };
 
     setEvents((prev) => [created, ...prev]);
-
-    const newNotif: NotificationItem = {
-      id: `notif-${Date.now()}`,
-      title: `New Event: ${created.title}`,
+    addNotification({
+      id: newId('notif'),
+      title: `New event: ${created.title}`,
       body: `Hosted by ${created.organizer} in ${created.building} (${created.room}).`,
       timestamp: 'Just now',
-      createdAt: Date.now(),
+      createdAt: syncedNow(),
       type: 'reminder',
       eventId: created.id,
       isRead: false,
-      urgent: created.isHot,
-    };
-    setNotifications((prev) => [newNotif, ...prev]);
-    showToast('Event published live to campus.');
+    });
+    showToast('Event published.');
   };
 
-  // Delete Event Handler (Organizer Only)
   const handleDeleteEvent = (eventId: string) => {
-    if (userProfile.role !== 'organizer') {
-      setIsRestrictedModalOpen(true);
-      return;
-    }
-
-    setEvents((prev) => (prev || []).filter((e) => e.id !== eventId));
-    // Also remove from RSVPs
+    if (!requireOrganizer()) return;
+    setEvents((prev) => prev.filter((e) => e.id !== eventId));
     setUserProfile((prev) => ({
       ...prev,
-      rsvpdEvents: (prev.rsvpdEvents || []).filter((id) => id !== eventId),
-      savedEvents: (prev.savedEvents || []).filter((id) => id !== eventId),
+      rsvpdEvents: prev.rsvpdEvents.filter((id) => id !== eventId),
+      savedEvents: prev.savedEvents.filter((id) => id !== eventId),
     }));
-    removeExpiredEventFromFirestore(eventId);
-    showToast('Event deleted from platform.');
+    setSelectedEventId((current) => (current === eventId ? null : current));
+    showToast('Event deleted.');
   };
 
-  // Broadcast Notification Handler
   const handleBroadcastNotification = (title: string, body: string, urgent: boolean) => {
-    const notif: NotificationItem = {
-      id: `notif-broadcast-${Date.now()}`,
+    if (!requireOrganizer()) return;
+    addNotification({
+      id: newId('notif-broadcast'),
       title,
       body,
       timestamp: 'Just now',
-      createdAt: Date.now(),
+      createdAt: syncedNow(),
       type: 'faculty_note',
       isRead: false,
       urgent,
-    };
-    setNotifications((prev) => [notif, ...prev]);
-    showToast('Announcement broadcasted.');
+    });
+    showToast('Announcement sent.');
   };
 
-  const unreadNotificationsCount = notifications.filter((n) => !n.isRead).length;
+  const openEventChat = useCallback(
+    (eventId: string) => {
+      const ev = events.find((e) => e.id === eventId);
+      if (ev) setChatTarget({ id: ev.id, type: 'event', title: ev.title });
+    },
+    [events]
+  );
 
-  // Show loading spinner while checking initial Firebase auth state
+  const openClubChat = useCallback(
+    (clubId: string) => {
+      const club = clubs.find((c) => c.id === clubId);
+      if (club) setChatTarget({ id: club.id, type: 'club', title: club.name });
+    },
+    [clubs]
+  );
+
+  const selectEvent = useCallback((event: CampusEvent) => setSelectedEventId(event.id), []);
+  const selectClub = useCallback((club: CampusClub) => setSelectedClubId(club.id), []);
+
+  const openNotification = (notif: NotificationItem) => {
+    setNotifications((prev) => prev.map((n) => (n.id === notif.id ? { ...n, isRead: true } : n)));
+    if (notif.eventId && events.some((e) => e.id === notif.eventId)) {
+      setIsNotificationOpen(false);
+      setSelectedEventId(notif.eventId);
+    } else {
+      setIsNotificationOpen(true);
+    }
+  };
+
+  const closeRestricted = useCallback(() => setIsRestrictedModalOpen(false), []);
+  useModal(isRestrictedModalOpen, closeRestricted);
+
+  const unreadNotificationsCount = notifications.filter((n) => !n.isRead).length;
+  const chatMessages = useMemo(
+    () => (chatTarget ? messages.filter((m) => m.targetId === chatTarget.id) : []),
+    [messages, chatTarget]
+  );
+
+  // ---- Render ------------------------------------------------------------
+
   if (isAuthChecking) {
     return (
-      <div className="min-h-screen bg-[#FFF9F2] flex items-center justify-center font-sans">
-        <div className="text-center space-y-3 animate-in fade-in duration-200">
-          <div className="w-11 h-11 rounded-2xl bg-orange-600 text-white flex items-center justify-center mx-auto shadow-md">
-            <Network className="w-6 h-6 animate-pulse" />
+      <div className="min-h-screen bg-paper flex items-center justify-center" role="status" aria-live="polite">
+        <div className="text-center space-y-4">
+          <div className="cc-btn-brand cc-loader-mark w-12 h-12 rounded-2xl flex items-center justify-center mx-auto">
+            <Network className="w-6 h-6" />
           </div>
-          <p className="text-xs text-orange-950 font-bold tracking-wide">Connecting to CampusConnect...</p>
+          <p className="text-sm text-ink-600 font-medium">Opening CampusConnect</p>
         </div>
       </div>
     );
   }
 
-  // If user is not authenticated, show the Auth Screen
   if (!firebaseUser) {
     return (
-      <AuthScreen 
-        onAuthSuccess={(user, role) => {
-          setFirebaseUser(user);
-          setUserProfile((prev) => ({
-            ...prev,
-            email: user.email || prev.email,
-            role: role || prev.role || 'student',
-            name: user.displayName || user.email?.split('@')[0] || prev.name,
-            emailSettings: {
-              ...prev.emailSettings,
-              recipientEmail: user.email || 'saikanala1403@gmail.com'
-            }
-          }));
-          localStorage.setItem(STORAGE_KEYS.ROLE, role || 'student');
-          showToast(`Welcome, ${user.email} (${role === 'organizer' ? 'Organizer' : 'Student'})!`);
-        }} 
-      />
+      <>
+        <AuthScreen
+          onRoleVerified={(role) => {
+            pendingRoleRef.current = role;
+          }}
+        />
+        <Toast toast={toast} onDismiss={dismissToast} />
+      </>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#FFF9F2] text-stone-900 flex flex-col font-sans selection:bg-orange-600 selection:text-white">
-      
-      {/* Toast popup */}
-      {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 px-4 py-2.5 rounded-xl bg-stone-900 text-white font-bold text-xs sm:text-sm shadow-xl flex items-center gap-2 animate-in fade-in duration-150 border border-orange-500/30">
-          <span>{toastMessage}</span>
-        </div>
-      )}
+    <div className="min-h-screen bg-paper text-ink-900 flex flex-col">
+      <a href="#main" className="cc-skip-link">
+        Skip to content
+      </a>
 
-      {/* Top Navigation Bar with Role badge & Email Center */}
+      <Toast toast={toast} onDismiss={dismissToast} />
+
       <Navbar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -650,11 +753,7 @@ export default function App() {
         onOpenNotifications={() => setIsNotificationOpen(true)}
         onOpenEmailModal={() => setIsEmailModalOpen(true)}
         onOpenFacultyModal={() => {
-          if (userProfile.role === 'organizer') {
-            setIsFacultyModalOpen(true);
-          } else {
-            setIsRestrictedModalOpen(true);
-          }
+          if (requireOrganizer()) setIsFacultyModalOpen(true);
         }}
         userProfile={userProfile}
         onOpenProfile={() => setIsProfileModalOpen(true)}
@@ -662,195 +761,162 @@ export default function App() {
         onLogout={handleLogout}
         onRoleRestrictedNotice={() => setIsRestrictedModalOpen(true)}
         onOpenVideoShowcase={() => setIsVideoShowcaseOpen(true)}
+        theme={theme}
+        onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
       />
 
-      {/* Urgent Live Campus Ticker */}
-      <LiveCampusTicker
-        notifications={notifications}
-        onSelectNotification={(notif) => {
-          if (notif.eventId) {
-            const ev = events.find((e) => e.id === notif.eventId);
-            if (ev) setSelectedEvent(ev);
-          } else {
-            setIsNotificationOpen(true);
-          }
-        }}
-      />
+      <LiveCampusTicker notifications={notifications} onSelectNotification={openNotification} />
 
-      {/* Main Pages Content */}
-      <main className="flex-1">
-        {activeTab === 'explore' && (
-          <ExploreView
-            events={events}
-            clubs={clubs}
-            resources={resources}
-            userProfile={userProfile}
-            onSelectEvent={setSelectedEvent}
-            onSelectClub={setSelectedClub}
-            onSelectResource={setSelectedResource}
-            onToggleRsvp={handleToggleRsvp}
-            onToggleJoinClub={handleToggleJoinClub}
-            onToggleSaveResource={handleToggleSaveResource}
-            onOpenChat={(id, type, title) => setChatTarget({ id, type, title })}
-            onSearchAI={handleAIMatchSearch}
-            isAiMatching={isAiMatching}
-            aiMatchResult={aiMatchResult}
-            onClearMatchResult={() => setAiMatchResult(null)}
-            onNavigateTab={setActiveTab}
-            onOpenVideoShowcase={() => setIsVideoShowcaseOpen(true)}
-          />
-        )}
-
-        {activeTab === 'events' && (
-          <EventsView
-            events={events}
-            userProfile={userProfile}
-            onSelectEvent={setSelectedEvent}
-            onToggleRsvp={handleToggleRsvp}
-            onOpenChat={(id, type, title) => setChatTarget({ id, type, title })}
-            onCreateEvent={handleCreateEvent}
-            onDeleteEvent={handleDeleteEvent}
-            onOpenOrganizerAuth={() => setIsRestrictedModalOpen(true)}
-          />
-        )}
-
-        {activeTab === 'clubs' && (
-          <ClubsView
-            clubs={clubs}
-            userProfile={userProfile}
-            onSelectClub={setSelectedClub}
-            onToggleJoin={handleToggleJoinClub}
-            onOpenChat={(id, type, title) => setChatTarget({ id, type, title })}
-          />
-        )}
-
-        {activeTab === 'resources' && (
-          <ResourcesView
-            resources={resources}
-            userProfile={userProfile}
-            onSelectResource={setSelectedResource}
-            onToggleSave={handleToggleSaveResource}
-            onLocateOnMap={() => {
-              setActiveTab('map');
-            }}
-          />
-        )}
-
-        {activeTab === 'map' && (
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <h1 className="text-xl sm:text-2xl font-bold text-stone-900">Campus Interactive Map</h1>
-                <p className="text-xs text-stone-500 mt-1">Explore engineering labs, student union dining, quiet study halls, and active perk zones</p>
-              </div>
-            </div>
-            <InteractiveCampusMap
-              events={events}
+      <main id="main" className="flex-1">
+        <div key={activeTab} className="cc-page">
+          {activeTab === 'explore' && (
+            <ExploreView
+              events={upcomingEvents}
+              allEvents={events}
+              clubs={clubs}
               resources={resources}
-              onSelectBuilding={(building) => {
-                showToast(`Viewing ${building.name}`);
-              }}
-            />
-          </div>
-        )}
-
-        {activeTab === 'calendar' && (
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-            <SocialCalendarView
-              events={events}
-              rsvpdEvents={userProfile.rsvpdEvents}
-              onSelectEvent={setSelectedEvent}
+              userProfile={userProfile}
+              onSelectEvent={selectEvent}
+              onSelectClub={selectClub}
+              onSelectResource={setSelectedResource}
               onToggleRsvp={handleToggleRsvp}
+              onToggleJoinClub={handleToggleJoinClub}
+              onToggleSaveResource={handleToggleSaveResource}
+              onOpenEventChat={openEventChat}
+              onOpenClubChat={openClubChat}
+              onSearchAI={handleAIMatchSearch}
+              isAiMatching={isAiMatching}
+              aiMatchResult={aiMatchResult}
+              onClearMatchResult={() => setAiMatchResult(null)}
+              onNavigateTab={setActiveTab}
+              onOpenVideoShowcase={() => setIsVideoShowcaseOpen(true)}
             />
-          </div>
-        )}
+          )}
+
+          {activeTab === 'events' && (
+            <EventsView
+              events={events}
+              userProfile={userProfile}
+              onSelectEvent={selectEvent}
+              onToggleRsvp={handleToggleRsvp}
+              onOpenChat={openEventChat}
+              onOpenCreateModal={() => setIsFacultyModalOpen(true)}
+              onDeleteEvent={handleDeleteEvent}
+            />
+          )}
+
+          {activeTab === 'clubs' && (
+            <ClubsView
+              clubs={clubs}
+              userProfile={userProfile}
+              onSelectClub={selectClub}
+              onToggleJoinClub={handleToggleJoinClub}
+              onOpenChat={openClubChat}
+            />
+          )}
+
+          {activeTab === 'resources' && (
+            <ResourcesView
+              resources={resources}
+              userProfile={userProfile}
+              onSelectResource={setSelectedResource}
+              onToggleSaveResource={handleToggleSaveResource}
+            />
+          )}
+
+          {activeTab === 'map' && (
+            <InteractiveCampusMap
+              events={upcomingEvents}
+              resources={resources}
+              onSelectEvent={selectEvent}
+              onSelectResource={setSelectedResource}
+            />
+          )}
+
+          {activeTab === 'calendar' && (
+            <SocialCalendarView
+              allEvents={events}
+              rsvpdEvents={userProfile.rsvpdEvents}
+              onSelectEvent={selectEvent}
+              onRemoveRsvp={handleToggleRsvp}
+              onNavigateExplore={() => setActiveTab('events')}
+            />
+          )}
+        </div>
       </main>
 
-      {/* Event Details Dialog */}
       <EventDetailModal
         event={selectedEvent}
         isOpen={Boolean(selectedEvent)}
-        onClose={() => setSelectedEvent(null)}
+        onClose={() => setSelectedEventId(null)}
         isRsvpd={selectedEvent ? userProfile.rsvpdEvents.includes(selectedEvent.id) : false}
-        onToggleRsvp={handleToggleRsvp}
-        onOpenChat={(id) => {
-          const ev = events.find((e) => e.id === id);
-          if (ev) setChatTarget({ id, type: 'event', title: ev.title });
+        onRsvp={handleToggleRsvp}
+        onOpenChat={openEventChat}
+        allEvents={events}
+        rsvpdEvents={userProfile.rsvpdEvents}
+        userProfile={userProfile}
+        messages={messages}
+        onSendMessage={(text, tag) => {
+          if (selectedEvent) void postMessage({ id: selectedEvent.id, type: 'event' }, text, tag);
         }}
+        onDeleteEvent={handleDeleteEvent}
       />
 
-      {/* Club Details Dialog */}
       <ClubDetailModal
         club={selectedClub}
         isOpen={Boolean(selectedClub)}
-        onClose={() => setSelectedClub(null)}
+        onClose={() => setSelectedClubId(null)}
         isJoined={selectedClub ? userProfile.joinedClubs.includes(selectedClub.id) : false}
         onToggleJoin={handleToggleJoinClub}
-        onOpenChat={(id) => {
-          const cl = clubs.find((c) => c.id === id);
-          if (cl) setChatTarget({ id, type: 'club', title: cl.name });
-        }}
+        onOpenChat={openClubChat}
       />
 
-      {/* Resource Details Dialog */}
       <ResourceDetailModal
         resource={selectedResource}
         isOpen={Boolean(selectedResource)}
         onClose={() => setSelectedResource(null)}
         isSaved={selectedResource ? userProfile.savedResources.includes(selectedResource.id) : false}
         onToggleSave={handleToggleSaveResource}
-        onLocateOnMap={() => {
-          setActiveTab('map');
-        }}
+        onLocateOnMap={() => setActiveTab('map')}
       />
 
-      {/* Live Discussion Modal with Real-time Firestore Sync */}
       <LiveChatModal
         isOpen={Boolean(chatTarget)}
         onClose={() => setChatTarget(null)}
         targetTitle={chatTarget?.title || 'Discussion'}
         targetType={chatTarget?.type || 'event'}
-        messages={messages.filter((m) => m.targetId === chatTarget?.id)}
-        onSendMessage={handleSendMessage}
+        messages={chatMessages}
+        onSendMessage={(text, tag) => {
+          if (chatTarget) void postMessage(chatTarget, text, tag);
+        }}
         onToggleLikeMessage={handleToggleLikeMessage}
         userProfile={userProfile}
       />
 
-      {/* Faculty Post Event & Broadcast Modal */}
       <FacultyDashboardModal
         isOpen={isFacultyModalOpen}
         onClose={() => setIsFacultyModalOpen(false)}
         onPostEvent={handleCreateEvent}
         onBroadcastNotification={handleBroadcastNotification}
-        existingEvents={events}
+        existingEvents={upcomingEvents}
       />
 
-      {/* Email Notifications & Sent Tickets Modal */}
       <EmailNotificationModal
         isOpen={isEmailModalOpen}
         onClose={() => setIsEmailModalOpen(false)}
         userProfile={userProfile}
-        emailSettings={userProfile.emailSettings || {
-          enabled: true,
-          recipientEmail: userProfile.email || firebaseUser?.email || 'saikanala1403@gmail.com',
-          notifyOnRsvp: true,
-          notifyOnMissedEvent: true,
-          notify24hBefore: true,
-          notify1hBefore: true,
-          notifyClubAnnouncements: true,
-          notifyAiDigest: true,
+        emailSettings={{
+          ...DEFAULT_EMAIL_SETTINGS,
+          ...userProfile.emailSettings,
+          recipientEmail: userProfile.emailSettings?.recipientEmail || activeEmail,
         }}
-        onUpdateEmailSettings={(newSettings: EmailNotificationSettings) => {
-          setUserProfile((prev) => ({
-            ...prev,
-            emailSettings: newSettings,
-          }));
-          showToast('Email preferences updated.');
+        onUpdateEmailSettings={(next: EmailNotificationSettings) => {
+          setUserProfile((prev) => ({ ...prev, emailSettings: next }));
+          showToast('Email preferences saved.');
         }}
-        userEmail={userProfile.email || firebaseUser?.email}
+        userEmail={activeEmail || undefined}
       />
 
-      {/* Campus Infrastructure Video Showcase Modal */}
       <CampusVideoShowcase
         isOpen={isVideoShowcaseOpen}
         onClose={() => setIsVideoShowcaseOpen(false)}
@@ -859,102 +925,105 @@ export default function App() {
         onRoleRestrictedNotice={() => setIsRestrictedModalOpen(true)}
       />
 
-      {/* Role Security Notice Modal */}
       {isRestrictedModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/50 backdrop-blur-xs animate-in fade-in">
-          <div className="bg-white border border-amber-300 rounded-2xl p-6 max-w-md shadow-2xl text-center space-y-4">
+        <div
+          className="cc-overlay fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink-900/50 backdrop-blur-xs"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) closeRestricted();
+          }}
+        >
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="restricted-title"
+            className="cc-dialog bg-white border border-ink-200 rounded-2xl p-6 max-w-md shadow-2xl text-center space-y-4"
+          >
             <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center mx-auto">
               <ShieldAlert className="w-6 h-6" />
             </div>
             <div>
-              <h3 className="font-extrabold text-base text-stone-900">Organizer Permissions Required</h3>
-              <p className="text-xs text-stone-600 mt-1 leading-relaxed">
-                Students cannot publish or delete campus events. To maintain verified academic and club integrity, only authorized <strong>Event Organizers & Faculty</strong> can create or delete events.
+              <h3 id="restricted-title" className="font-display font-semibold text-lg text-ink-900">
+                Only organizers can do this
+              </h3>
+              <p className="text-sm text-ink-600 mt-1.5 leading-relaxed">
+                Publishing, deleting and announcing events is limited to event organizers and faculty. If that is you,
+                sign out and sign back in as an organizer with your passcode.
               </p>
             </div>
-            <div className="bg-amber-50 p-3 rounded-xl text-xs text-amber-900 text-left border border-amber-200">
-              🔑 <strong>Organizer Access:</strong> If you are a campus organizer, sign out and select &ldquo;Event Organizer&rdquo; on the login screen using the organizer passcode.
-            </div>
             <button
-              onClick={() => setIsRestrictedModalOpen(false)}
-              className="w-full py-2.5 rounded-xl bg-stone-900 hover:bg-stone-800 text-white text-xs font-bold transition-colors cursor-pointer"
+              autoFocus
+              onClick={closeRestricted}
+              className="cc-btn-ink w-full py-2.5 rounded-xl text-sm font-semibold cursor-pointer"
             >
-              Close
+              Got it
             </button>
           </div>
         </div>
       )}
 
-      {/* Notifications Drawer */}
       <NotificationDropdown
         isOpen={isNotificationOpen}
         onClose={() => setIsNotificationOpen(false)}
         notifications={notifications}
-        onMarkAllAsRead={() => {
-          setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
-          showToast('All notifications marked as read.');
-        }}
-        onClearAll={() => {
-          setNotifications([]);
-          showToast('Notifications cleared.');
-        }}
-        onSelectNotification={(notif) => {
-          setIsNotificationOpen(false);
-          if (notif.eventId) {
-            const ev = events.find((e) => e.id === notif.eventId);
-            if (ev) setSelectedEvent(ev);
-          }
-        }}
+        onMarkAllAsRead={() => setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })))}
+        onClearAll={() => setNotifications([])}
+        onSelectNotification={openNotification}
       />
 
-      {/* Student Profile & Preferences Modal */}
       <UserProfileModal
         isOpen={isProfileModalOpen}
         onClose={() => setIsProfileModalOpen(false)}
         userProfile={userProfile}
         onUpdateProfile={(updated) => {
-          setUserProfile((prev) => {
-            const next = { ...prev, ...updated };
-            if (firebaseUser?.uid) {
-              syncUserProfileToFirestore(firebaseUser.uid, next);
-            }
-            return next;
-          });
-          showToast('Preferences updated and synced.');
+          setUserProfile((prev) => normalizeProfile(prev, { ...updated, role: prev.role }));
+          showToast('Profile saved.');
         }}
         allEvents={events}
         allClubs={clubs}
         allResources={resources}
-        onSelectEvent={setSelectedEvent}
-        onSelectClub={setSelectedClub}
+        onSelectEvent={selectEvent}
+        onSelectClub={selectClub}
         onSelectResource={setSelectedResource}
         onRemoveRsvp={handleToggleRsvp}
         onRemoveClub={handleToggleJoinClub}
         onRemoveResource={handleToggleSaveResource}
       />
 
-      {/* Minimal Footer */}
-      <footer className="bg-white border-t border-orange-200/80 py-8 px-4 text-xs text-stone-500 mt-auto">
+      <footer className="bg-white border-t border-ink-200 py-8 px-4 text-sm text-ink-500 mt-auto">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2.5">
-            <div className="w-6 h-6 rounded-lg bg-orange-600 flex items-center justify-center text-white shadow-2xs">
-              <Network className="w-3.5 h-3.5 text-white" />
+            <div className="cc-btn-brand w-7 h-7 rounded-lg flex items-center justify-center">
+              <Network className="w-4 h-4" />
             </div>
-            <span className="font-bold text-stone-900">CampusConnect</span>
-            <span className="text-orange-900/60">• Vellore Institute of Technology</span>
+            <span className="font-display font-semibold text-ink-900">CampusConnect</span>
+            <span className="text-ink-500">Vellore Institute of Technology</span>
           </div>
 
-          <div className="flex items-center gap-5 text-stone-600 font-semibold">
-            <button onClick={() => setActiveTab('explore')} className="hover:text-stone-900 cursor-pointer">Explore</button>
-            <button onClick={() => setActiveTab('events')} className="hover:text-stone-900 cursor-pointer">Events</button>
-            <button onClick={() => setActiveTab('clubs')} className="hover:text-stone-900 cursor-pointer">Clubs</button>
-            <button onClick={() => setActiveTab('resources')} className="hover:text-stone-900 cursor-pointer">Resources</button>
-            <button onClick={() => setActiveTab('map')} className="hover:text-stone-900 cursor-pointer">Map</button>
-            <button onClick={() => setActiveTab('calendar')} className="hover:text-stone-900 cursor-pointer">My Schedule</button>
-          </div>
+          <nav aria-label="Footer" className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-ink-600 font-medium">
+            {(
+              [
+                ['explore', 'Explore'],
+                ['events', 'Events'],
+                ['clubs', 'Clubs'],
+                ['resources', 'Resources'],
+                ['map', 'Map'],
+                ['calendar', 'My schedule'],
+              ] as [Tab, string][]
+            ).map(([tab, label]) => (
+              <button
+                key={tab}
+                onClick={() => {
+                  setActiveTab(tab);
+                  window.scrollTo({ top: 0 });
+                }}
+                className="hover:text-ink-900 transition-colors cursor-pointer"
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
         </div>
       </footer>
-
     </div>
   );
 }

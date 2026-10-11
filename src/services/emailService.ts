@@ -1,4 +1,5 @@
 import { CampusEvent, CampusClub, DispatchedEmail, UserProfile } from '../types';
+import { formatCampusClock, formatEventWhen, now } from '../utils/campusTime';
 
 const EMAIL_STORAGE_KEY = 'campuspulse_dispatched_emails_v2';
 
@@ -61,18 +62,19 @@ export function saveDispatchedEmail(email: DispatchedEmail) {
 export function sendRsvpConfirmationEmail(user?: UserProfile | null, event?: CampusEvent | null, userEmail?: string): DispatchedEmail | null {
   if (!event) return null;
   const userName = user?.name || 'Student';
-  const emailAddress = userEmail || user?.email || user?.emailSettings?.recipientEmail || 'saikanala1403@gmail.com';
+  const emailAddress = userEmail || user?.email || user?.emailSettings?.recipientEmail || '';
   const email: DispatchedEmail = {
-    id: `email-rsvp-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+    id: `email-rsvp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     recipientEmail: emailAddress,
     recipientName: userName,
     subject: `🎟️ RSVP Confirmed: ${event.title}`,
-    previewText: `You're officially registered for ${event.title} at ${event.building} (Room ${event.room})`,
-    sentAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ', Today',
+    previewText: `You're officially registered for ${event.title} at ${event.building} (${event.room})`,
+    sentAt: formatCampusClock(),
+    createdAt: now(),
     category: 'rsvp_confirmation',
     eventTitle: event.title,
-    eventDate: event.displayTime,
-    eventLocation: `${event.building} • Room ${event.room}`,
+    eventDate: formatEventWhen(event),
+    eventLocation: `${event.building} , ${event.room}`,
     htmlContent: `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 580px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #fed7aa; overflow: hidden;">
         <div style="background: linear-gradient(135deg, #ea580c, #c2410c); padding: 28px 24px; color: #ffffff; text-align: center;">
@@ -88,11 +90,11 @@ export function sendRsvpConfirmationEmail(user?: UserProfile | null, event?: Cam
             <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
               <tr>
                 <td style="padding: 6px 0; color: #9a3412; font-weight: 600; width: 110px;">📅 Date & Time:</td>
-                <td style="padding: 6px 0; color: #1e293b;">${event.displayTime}</td>
+                <td style="padding: 6px 0; color: #1e293b;">${formatEventWhen(event)}</td>
               </tr>
               <tr>
                 <td style="padding: 6px 0; color: #9a3412; font-weight: 600;">📍 Location:</td>
-                <td style="padding: 6px 0; color: #1e293b;">${event.building} (Room ${event.room})</td>
+                <td style="padding: 6px 0; color: #1e293b;">${event.building} (${event.room})</td>
               </tr>
               <tr>
                 <td style="padding: 6px 0; color: #9a3412; font-weight: 600;">👥 Organizer:</td>
@@ -129,7 +131,7 @@ export function sendRsvpConfirmationEmail(user?: UserProfile | null, event?: Cam
 export function sendMissedEventEmail(user?: UserProfile | null, event?: CampusEvent | null, userEmail?: string): DispatchedEmail | null {
   if (!event) return null;
 
-  const emailAddress = userEmail || user?.email || user?.emailSettings?.recipientEmail || 'saikanala1403@gmail.com';
+  const emailAddress = userEmail || user?.email || user?.emailSettings?.recipientEmail || '';
   
   // Verify that we haven't already dispatched a missed event email for this event
   const existingEmails = getDispatchedEmails();
@@ -142,16 +144,17 @@ export function sendMissedEventEmail(user?: UserProfile | null, event?: CampusEv
 
   const userName = user?.name || 'Student';
   const email: DispatchedEmail = {
-    id: `email-missed-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+    id: `email-missed-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     recipientEmail: emailAddress,
     recipientName: userName,
     subject: `⚠️ Missed Event Notice & Resources: ${event.title}`,
     previewText: `The deadline for ${event.title} has completed. Slides and notes have been archived.`,
-    sentAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ', Today',
+    sentAt: formatCampusClock(),
+    createdAt: now(),
     category: 'missed_event_alert',
     eventTitle: event.title,
-    eventDate: event.displayTime,
-    eventLocation: `${event.building} • Room ${event.room}`,
+    eventDate: formatEventWhen(event),
+    eventLocation: `${event.building} , ${event.room}`,
     htmlContent: `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 580px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #fed7aa; overflow: hidden;">
         <div style="background: linear-gradient(135deg, #d97706, #b45309); padding: 26px 24px; color: #ffffff; text-align: center;">
@@ -162,7 +165,7 @@ export function sendMissedEventEmail(user?: UserProfile | null, event?: CampusEv
         
         <div style="padding: 24px; color: #1e293b;">
           <p style="font-size: 13px; color: #475569; margin-top: 0;">
-            Hi <strong>${userName}</strong>, you were registered for <strong>${event.title}</strong> (${event.displayTime}) which has now completed its schedule.
+            Hi <strong>${userName}</strong>, you were registered for <strong>${event.title}</strong> (${formatEventWhen(event)}) which has now completed its schedule.
           </p>
 
           <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; padding: 16px; margin: 18px 0;">
@@ -189,14 +192,15 @@ export function sendMissedEventEmail(user?: UserProfile | null, event?: CampusEv
 export function sendClubWelcomeEmail(user?: UserProfile | null, club?: CampusClub | null, userEmail?: string): DispatchedEmail | null {
   if (!club) return null;
   const userName = user?.name || 'Student';
-  const emailAddress = userEmail || user?.email || user?.emailSettings?.recipientEmail || 'saikanala1403@gmail.com';
+  const emailAddress = userEmail || user?.email || user?.emailSettings?.recipientEmail || '';
   const email: DispatchedEmail = {
-    id: `email-club-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+    id: `email-club-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     recipientEmail: emailAddress,
     recipientName: userName,
     subject: `✨ Welcome to ${club.name}!`,
     previewText: `You've joined ${club.name}. Weekly meetings: ${club.meetingSchedule}`,
-    sentAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ', Today',
+    sentAt: formatCampusClock(),
+    createdAt: now(),
     category: 'club_welcome',
     eventTitle: club.name,
     eventDate: club.meetingSchedule,
@@ -241,12 +245,13 @@ export function sendOrganizerBroadcastEmail(
   recipientCount: number
 ): DispatchedEmail {
   const email: DispatchedEmail = {
-    id: `email-broadcast-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+    id: `email-broadcast-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     recipientEmail: `[Broadcast to ${recipientCount} registered students]`,
     recipientName: 'All Registered Students',
     subject: `📢 Announcement: ${subject}`,
     previewText: `${organizerName} sent an update regarding ${eventTitle}`,
-    sentAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ', Today',
+    sentAt: formatCampusClock(),
+    createdAt: now(),
     category: 'organizer_broadcast',
     eventTitle: eventTitle,
     htmlContent: `
@@ -325,7 +330,7 @@ export function downloadEmlFile(email: DispatchedEmail): void {
     `From: "CampusConnect" <notifications@campusconnect.vit.ac.in>`,
     `To: <${email.recipientEmail}>`,
     `Subject: ${email.subject}`,
-    `Date: ${new Date().toUTCString()}`,
+    `Date: ${new Date(email.createdAt || now()).toUTCString()}`,
     `MIME-Version: 1.0`,
     `Content-Type: text/html; charset=utf-8`,
     `X-Mailer: CampusConnect-VIT-Portal`,
