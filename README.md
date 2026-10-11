@@ -40,13 +40,54 @@ Tokens, motion and dark mode live in `src/index.css`.
 - Motion: `.cc-page`, `.cc-dialog`, `.cc-stagger`, `.cc-card`, `.cc-reveal`. All of it is
   disabled for people who ask for reduced motion.
 
+## What is shared between people
+
+Everything below lives in Firebase, so it is the same for every account on every device.
+
+| Data | Where | Who can change it |
+|---|---|---|
+| Accounts | Firebase Authentication | The person |
+| Profile, joined clubs, saved services | `users/{uid}` | Only that person |
+| Events organizers publish | `events/{eventId}` | Only the organizer who published it |
+| Registrations (RSVPs) | `registrations/{eventId}__{date}__{uid}` | Only that person |
+| Discussion messages | `campus_chats/{messageId}` | Anyone signed in can post |
+
+The "going" number on an event is its starting number plus real registrations, and it
+updates live for everyone. Organizers see who registered under Post event > Attendees.
+The built-in sample events (`src/data/mockEvents.ts`) are not in the database, but
+registrations for them are.
+
+## Put it online
+
+One-time setup:
+
+```bash
+npm install -g firebase-tools
+firebase login
+```
+
+In the [Firebase console](https://console.firebase.google.com), open the project and check
+that Authentication has Email/Password and Google turned on.
+
+Every time you want to publish:
+
+```bash
+npm run deploy
+```
+
+That builds the app and uploads the site and the database rules. The command prints your
+public link, `https://campus-connect-825d2.web.app`. Firebase Hosting domains are already
+authorized for sign-in. If you host anywhere else, add that domain under
+Authentication > Settings > Authorized domains.
+
 ## Before a real launch
 
-- **Sample data.** Events, clubs and services come from `src/data`. The sample events run on
-  a repeating five-day schedule so there is always something on today. Replace with your database.
+- **Sample data.** Clubs, services and the starter events come from `src/data`. The starter
+  events run on a repeating five-day schedule so there is always something on today.
 - **Organizer role.** The passcode check runs in the browser. Move the role to a Firebase
   custom claim and enforce it in `firestore.rules`.
 - **Email.** Tickets and notices are previews saved in the email center. Nothing is sent.
 - **AI matching.** `/api/ai/match` exists only in the Vite dev server (`src/server`). A
   production build needs it hosted; until then the app uses the built-in keyword matcher.
-- **Database rules.** Deploy `firestore.rules` with `firebase deploy --only firestore:rules`.
+- **Attendee names.** Any signed-in person can read registrations (name, major, year), which
+  is what makes live counts work. Restrict this if real student data is involved.
