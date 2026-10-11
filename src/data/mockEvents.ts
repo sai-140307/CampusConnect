@@ -1,4 +1,5 @@
 import { CampusEvent, EventCategory, PerkType } from '../types';
+import { campusDayNumber, dateKeyFromDayNumber } from '../utils/campusTime';
 
 // Avatar list for attendees
 const AVATARS = [
@@ -42,15 +43,37 @@ interface EventRawDef {
   eligibility?: string;
 }
 
-// Helper to generate dynamic dates relative to today
-export const getDynamicDate = (dayOffset: number): string => {
-  const d = new Date();
-  d.setDate(d.getDate() + dayOffset);
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-};
+/**
+ * Demo schedule.
+ *
+ * The sample events run on a five-day festival schedule that restarts every two days, so the app
+ * always has events today and in the days ahead, in the campus time zone.
+ * `SEED_CYCLE_START` identifies the current cycle; when it changes, the sample
+ * events are new occurrences.
+ *
+ * In production, replace this file with events loaded from your database.
+ */
+const CYCLE_DAYS = 5;
+// Start a fresh cycle every two days, so "today" is always day 1 or 2 of the five
+// and there are at least three more days of events ahead.
+const CYCLE_RESTART_DAYS = 2;
+const todayNumber = campusDayNumber();
+const cycleStartNumber = todayNumber - (todayNumber % CYCLE_RESTART_DAYS);
+export const SEED_CYCLE_START = dateKeyFromDayNumber(cycleStartNumber);
+
+/** Date key for day `dayOffset` (0-4) of the current festival cycle. */
+export const getDynamicDate = (dayOffset: number): string =>
+  dateKeyFromDayNumber(cycleStartNumber + (((dayOffset % CYCLE_DAYS) + CYCLE_DAYS) % CYCLE_DAYS));
+
+/** The sample data was authored against 19-23 Aug 2026; map those days onto the cycle. */
+const AUTHORED_FIRST_DAY = Date.UTC(2026, 7, 19);
+function rollDate(date: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!m) return date;
+  const offset = Math.round((Date.UTC(+m[1], +m[2] - 1, +m[3]) - AUTHORED_FIRST_DAY) / 86_400_000);
+  if (offset < 0 || offset > 30) return date;
+  return getDynamicDate(offset);
+}
 
 const RAW_EVENTS: EventRawDef[] = [
   // ==========================================
@@ -1554,7 +1577,7 @@ export function generateAllCampusEvents(): CampusEvent[] {
       building: tmpl.building,
       room: tmpl.room,
       mapCoords: tmpl.coords,
-      date: day.date,
+      date: rollDate(day.date),
       startTime: slot.start,
       endTime: slot.end,
       displayTime: `${day.label} ${slot.timeDisplay}`,
@@ -1588,7 +1611,7 @@ export function generateAllCampusEvents(): CampusEvent[] {
       building: tmpl.building,
       room: `${tmpl.room} (Annex)`,
       mapCoords: tmpl.coords,
-      date: day2.date,
+      date: rollDate(day2.date),
       startTime: slot2.start,
       endTime: slot2.end,
       displayTime: `${day2.label} ${slot2.timeDisplay}`,
@@ -1622,12 +1645,12 @@ export function generateAllCampusEvents(): CampusEvent[] {
       building: tmpl.building,
       room: `${tmpl.room} Main Stage`,
       mapCoords: tmpl.coords,
-      date: day3.date,
+      date: rollDate(day3.date),
       startTime: slot3.start,
       endTime: slot3.end,
       displayTime: `${day3.label} ${slot3.timeDisplay}`,
       isToday: day3.isToday,
-      perks: [...tmpl.perks, 'Certificates 📜'],
+      perks: Array.from(new Set<PerkType>([...tmpl.perks, 'Certificates 📜'])),
       foodDetails: tmpl.foodDetails,
       tags: [...tmpl.tags, 'Finals', 'Prizes'],
       image: tmpl.image,
@@ -1641,7 +1664,8 @@ export function generateAllCampusEvents(): CampusEvent[] {
     });
   });
 
-  return allEvents;
+  // Day and time labels are computed live from date/startTime/endTime, never stored.
+  return allEvents.map(({ displayTime: _label, isToday: _today, ...event }) => event);
 }
 
 function formatRawEvent(raw: EventRawDef): CampusEvent {
@@ -1657,7 +1681,7 @@ function formatRawEvent(raw: EventRawDef): CampusEvent {
     building: raw.building,
     room: raw.room,
     mapCoords: raw.coords,
-    date: raw.date,
+    date: rollDate(raw.date),
     startTime: raw.startTime,
     endTime: raw.endTime,
     displayTime: raw.displayTime,

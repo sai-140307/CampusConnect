@@ -10,3 +10,26 @@ export function handleImageFallback(e: React.SyntheticEvent<HTMLImageElement, Ev
     target.src = fallbackUrl;
   }
 }
+
+const AVATAR_COLORS = ['#3b4cca', '#0e7c7b', '#b45309', '#9d174d', '#4d7c0f', '#6d28d9', '#0369a1'];
+
+/** A generated initials avatar, so every person gets their own instead of a stock photo. */
+export function initialsAvatar(name: string): string {
+  const clean = (name || 'Student').trim();
+  const initials =
+    clean
+      .split(/[\s._-]+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]!.toUpperCase())
+      .join('') || 'S';
+  let hash = 0;
+  for (let i = 0; i < clean.length; i++) hash = (hash * 31 + clean.charCodeAt(i)) >>> 0;
+  const color = AVATAR_COLORS[hash % AVATAR_COLORS.length];
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">` +
+    `<rect width="64" height="64" fill="${color}"/>` +
+    `<text x="32" y="33" dy=".35em" text-anchor="middle" font-family="system-ui,sans-serif" font-size="26" font-weight="600" fill="#fff">${initials}</text>` +
+    `</svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}

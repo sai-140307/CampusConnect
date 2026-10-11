@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowRight, Zap, ChevronLeft, ChevronRight, Flame, Bell, Clock } from 'lucide-react';
 import { NotificationItem } from '../types';
-import { formatRelativeTime } from '../utils/dateSyncUtils';
+import { formatRelativeTime } from '../utils/campusTime';
+import { useNow } from '../hooks/useNow';
 
 interface LiveCampusTickerProps {
   notifications: NotificationItem[];
@@ -14,15 +15,7 @@ export const LiveCampusTicker: React.FC<LiveCampusTickerProps> = ({
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
-  const [, setClockTick] = useState(0);
-
-  // Sync relative time strings every 30 seconds
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setClockTick((t) => t + 1);
-    }, 30000);
-    return () => clearInterval(timer);
-  }, []);
+  const now = useNow();
 
   // Filter valid notifications
   const items = notifications.length > 0 ? notifications : [];
@@ -53,65 +46,64 @@ export const LiveCampusTicker: React.FC<LiveCampusTickerProps> = ({
     setCurrentIndex((prev) => (prev + 1) % items.length);
   };
 
-  const relativeTime = current.createdAt
-    ? formatRelativeTime(current.createdAt, current.timestamp)
-    : current.timestamp || 'Just now';
+  const relativeTime = formatRelativeTime(current.createdAt, current.timestamp || 'Just now', now);
 
   return (
     <div
       onMouseEnter={() => setIsPaused(true)}
       onMouseLeave={() => setIsPaused(false)}
-      className="bg-amber-50/95 dark:bg-slate-900/95 border-b border-amber-200/80 dark:border-slate-800 px-3 sm:px-4 py-2 text-stone-800 dark:text-slate-200 text-xs transition-colors shadow-2xs"
+      className="bg-amber-50/95 border-b border-amber-200/80 px-3 sm:px-4 py-2 text-ink-800 text-xs transition-colors shadow-2xs"
     >
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-2.5">
         {/* Left Side: Live Badge + Dynamic Item */}
         <div className="flex items-center gap-2.5 overflow-hidden flex-1 min-w-0">
           <div className="flex items-center gap-1.5 shrink-0">
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-200/90 dark:bg-amber-500/20 text-amber-950 dark:text-amber-300 font-bold text-[11px]">
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-200/90 text-amber-950 font-bold text-xs">
               {current.type === 'food_drop' ? (
-                <Flame className="w-3 h-3 text-amber-700 dark:text-amber-400 fill-amber-700 dark:fill-amber-400" />
+                <Flame className="w-3 h-3 text-amber-700 fill-amber-700" />
               ) : (
-                <Zap className="w-3 h-3 text-amber-700 dark:text-amber-400 fill-amber-700 dark:fill-amber-400" />
+                <Zap className="w-3 h-3 text-amber-700 fill-amber-700" />
               )}
-              <span>Live Campus Alert</span>
+              <span>Campus alert</span>
             </span>
 
             {/* Live relative time */}
-            <span className="hidden sm:inline-flex items-center gap-1 text-[10px] text-amber-900/80 dark:text-slate-400 bg-amber-100/70 dark:bg-slate-800 px-1.5 py-0.5 rounded">
+            <span className="hidden sm:inline-flex items-center gap-1 text-2xs text-amber-900/80 bg-amber-100/70 px-1.5 py-0.5 rounded">
               <Clock className="w-2.5 h-2.5" />
               {relativeTime}
             </span>
           </div>
 
           <p
+            key={current.id}
             onClick={() => onSelectNotification(current)}
-            className="truncate font-normal text-stone-800 dark:text-slate-200 cursor-pointer hover:text-orange-950 dark:hover:text-orange-400 transition-colors flex-1"
+            className="cc-ticker-item truncate font-normal text-ink-800 cursor-pointer hover:text-brand-950 transition-colors flex-1"
           >
-            <span className="font-bold text-stone-950 dark:text-white">{current.title} — </span>
-            <span className="text-stone-600 dark:text-slate-400">{current.body}</span>
+            <span className="font-bold text-ink-950">{current.title} — </span>
+            <span className="text-ink-600">{current.body}</span>
           </p>
         </div>
 
         {/* Right Side: Carousel Controls & Action Button */}
         <div className="flex items-center gap-2 shrink-0">
           {items.length > 1 && (
-            <div className="hidden xs:flex items-center gap-1 bg-amber-100/60 dark:bg-slate-800 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-amber-900 dark:text-slate-300 border dark:border-slate-700">
+            <div className="hidden sm:flex items-center gap-1 bg-amber-100/60 rounded-md px-1.5 py-0.5 text-xs font-semibold text-amber-900 border">
               <button
                 type="button"
                 onClick={handlePrev}
                 aria-label="Previous alert"
-                className="p-0.5 rounded hover:bg-amber-200/80 dark:hover:bg-slate-700 text-amber-900 dark:text-slate-300 transition-colors cursor-pointer"
+                className="p-0.5 rounded hover:bg-amber-200/80 text-amber-900 transition-colors cursor-pointer"
               >
                 <ChevronLeft className="w-3 h-3" />
               </button>
-              <span className="px-1 text-[10px]">
+              <span className="px-1 text-2xs">
                 {activeIndex + 1}/{items.length}
               </span>
               <button
                 type="button"
                 onClick={handleNext}
                 aria-label="Next alert"
-                className="p-0.5 rounded hover:bg-amber-200/80 dark:hover:bg-slate-700 text-amber-900 dark:text-slate-300 transition-colors cursor-pointer"
+                className="p-0.5 rounded hover:bg-amber-200/80 text-amber-900 transition-colors cursor-pointer"
               >
                 <ChevronRight className="w-3 h-3" />
               </button>
@@ -121,7 +113,7 @@ export const LiveCampusTicker: React.FC<LiveCampusTickerProps> = ({
           <button
             type="button"
             onClick={() => onSelectNotification(current)}
-            className="inline-flex items-center gap-1 text-xs font-bold text-amber-900 dark:text-orange-400 hover:text-orange-950 dark:hover:text-orange-300 px-2 py-0.5 rounded hover:bg-amber-200/50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            className="inline-flex items-center gap-1 text-xs font-bold text-amber-900 hover:text-brand-950 px-2 py-0.5 rounded hover:bg-amber-200/50 transition-colors cursor-pointer"
           >
             <span>Details</span>
             <ArrowRight className="w-3 h-3" />

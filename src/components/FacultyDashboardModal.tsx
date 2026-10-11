@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useModal } from '../hooks/useModal';
 import { 
   X, 
   Sparkles, 
@@ -16,6 +17,7 @@ import {
 import { CampusEvent, PerkType, EventCategory } from '../types';
 import { enhanceEventWithAI } from '../services/aiService';
 import { sendOrganizerBroadcastEmail } from '../services/emailService';
+import { CAMPUS_TIME_ZONE_LABEL, campusDateKey, campusDateTimeToMs, eventEndMs, formatEventWhen, now as syncedNow } from '../utils/campusTime';
 
 interface FacultyDashboardModalProps {
   isOpen: boolean;
@@ -65,7 +67,9 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
   const [organizer, setOrganizer] = useState('');
   const [building, setBuilding] = useState('Student Union Hall');
   const [room, setRoom] = useState('Ballroom A');
-  const [date, setDate] = useState('2026-08-20');
+  const [date, setDate] = useState(() => campusDateKey());
+  const [formError, setFormError] = useState<string | null>(null);
+  const [capacity, setCapacity] = useState(80);
   const [startTime, setStartTime] = useState('17:00');
   const [endTime, setEndTime] = useState('19:00');
   const [description, setDescription] = useState('');
@@ -75,12 +79,14 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
   const [isSubmitted, setIsSubmitted] = useState(false);
 
   // Broadcast State
-  const [selectedEventId, setSelectedEventId] = useState<string>(existingEvents[0]?.id || '');
+  const [selectedEventId, setSelectedEventId] = useState<string>('');
   const [bTitle, setBTitle] = useState('');
   const [bBody, setBBody] = useState('');
   const [bUrgent, setBUrgent] = useState(true);
   const [sendEmailAlso, setSendEmailAlso] = useState(true);
   const [bSuccess, setBSuccess] = useState(false);
+
+  useModal(isOpen, onClose);
 
   if (!isOpen) return null;
 
@@ -116,7 +122,22 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
 
   const handleCreateSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title || !description || !organizer) return;
+    if (!title.trim() || !description.trim() || !organizer.trim()) return;
+
+    const startMs = campusDateTimeToMs(date, startTime);
+    if (Number.isNaN(startMs)) {
+      setFormError('Choose a valid date and start time.');
+      return;
+    }
+    if (startTime === endTime) {
+      setFormError('The end time must be different from the start time.');
+      return;
+    }
+    if (eventEndMs({ date, startTime, endTime }) <= syncedNow()) {
+      setFormError(`That time has already passed on campus (${CAMPUS_TIME_ZONE_LABEL}). Choose a later date or time.`);
+      return;
+    }
+    setFormError(null);
 
     onPostEvent({
       title,
@@ -127,28 +148,29 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
       date,
       startTime,
       endTime,
-      displayTime: `Aug 20, ${startTime} - ${endTime}`,
       description,
-      shortDesc: description.slice(0, 90) + '...',
+      shortDesc: description.trim().length > 110 ? `${description.trim().slice(0, 107)}…` : description.trim(),
       perks: selectedPerks,
       foodDetails: selectedPerks.includes('Free Food 🍕') ? foodDetails || 'Complimentary catered refreshments' : undefined,
-      capacity: 80,
-      rsvpCount: 1,
+      capacity: Math.max(1, Math.round(capacity) || 80),
+      rsvpCount: 0,
       image: 'https://images.unsplash.com/photo-1523240795612-9a054b0db644?w=800&auto=format&fit=crop&q=80',
-      gradient: 'from-orange-800 to-amber-900',
+      gradient: 'from-brand-800 to-amber-900',
       facultyApproved: true,
       eligibility: 'Open to all registered students',
-      attendeeAvatars: ['https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80'],
+      attendeeAvatars: [],
       campusZone: 'Central Hub',
       mapCoords: { x: 50, y: 50 },
-      isToday: false,
     });
+    setTitle('');
+    setDescription('');
+    setFoodDetails('');
 
     setIsSubmitted(true);
     setTimeout(() => {
       setIsSubmitted(false);
       onClose();
-    }, 1500);
+    }, 900);
   };
 
   const handleBroadcastSubmit = (e: React.FormEvent) => {
@@ -156,7 +178,7 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
     if (!bTitle || !bBody) return;
 
     const targetEv = existingEvents.find(e => e.id === selectedEventId);
-    const targetTitle = targetEv ? targetEv.title : 'All Campus Students';
+    const targetTitle = targetEv ? targetEv.title : 'Everyone on campus';
 
     onBroadcastNotification(bTitle, bBody, bUrgent);
 
@@ -179,45 +201,45 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/50 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-150">
+    <div className="cc-overlay fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink-900/50 backdrop-blur-xs overflow-y-auto" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div 
-        className="relative w-full max-w-2xl bg-white border border-orange-200/80 rounded-2xl shadow-2xl overflow-hidden my-8 flex flex-col max-h-[90vh] text-stone-900"
+        className="cc-dialog relative w-full max-w-2xl bg-white border border-brand-200/80 rounded-2xl shadow-2xl overflow-hidden my-8 flex flex-col max-h-[90vh] text-ink-900"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="p-5 bg-gradient-to-r from-orange-50 to-amber-50/60 border-b border-orange-200/70 flex items-center justify-between gap-3">
+        <div className="p-5 bg-gradient-to-r from-brand-50 to-amber-50/60 border-b border-brand-200/70 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-orange-600 text-white flex items-center justify-center shadow-xs">
+            <div className="cc-btn-brand w-10 h-10 rounded-xl flex items-center justify-center shadow-xs">
               <Sparkles className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-bold text-stone-900 text-base">Organizer & Faculty Studio</h3>
-                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-950 border border-amber-300">
+                <h3 className="font-bold text-ink-900 text-base">Organizer & Faculty Studio</h3>
+                <span className="px-2 py-0.5 rounded text-2xs font-bold bg-amber-100 text-amber-950 border border-amber-300">
                   Organizer Access
                 </span>
               </div>
-              <p className="text-xs text-stone-500">Publish verified campus sessions and broadcast announcements</p>
+              <p className="text-xs text-ink-500">Publish verified campus sessions and broadcast announcements</p>
             </div>
           </div>
 
           <button
             onClick={onClose}
-            className="p-2 rounded-xl bg-white border border-orange-200 hover:bg-orange-100/60 text-stone-500 hover:text-stone-900 transition-colors cursor-pointer"
+            className="p-2 rounded-xl bg-white border border-brand-200 hover:bg-brand-100/60 text-ink-500 hover:text-ink-900 transition-colors cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex border-b border-orange-100 bg-orange-50/30 px-6 pt-2 gap-3">
+        <div className="flex border-b border-brand-100 bg-brand-50/30 px-6 pt-2 gap-3">
           <button
             type="button"
             onClick={() => setActiveTab('create')}
             className={`pb-2.5 px-2 text-xs font-bold border-b-2 transition-all cursor-pointer ${
               activeTab === 'create'
-                ? 'border-orange-600 text-orange-950 font-bold'
-                : 'border-transparent text-stone-500 hover:text-stone-800'
+                ? 'border-brand-600 text-brand-950 font-bold'
+                : 'border-transparent text-ink-500 hover:text-ink-800'
             }`}
           >
             + Post Campus Event
@@ -228,8 +250,8 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
             onClick={() => setActiveTab('broadcast')}
             className={`pb-2.5 px-2 text-xs font-bold border-b-2 transition-all flex items-center gap-1.5 cursor-pointer ${
               activeTab === 'broadcast'
-                ? 'border-orange-600 text-orange-950 font-bold'
-                : 'border-transparent text-stone-500 hover:text-stone-800'
+                ? 'border-brand-600 text-brand-950 font-bold'
+                : 'border-transparent text-ink-500 hover:text-ink-800'
             }`}
           >
             <Radio className="w-3.5 h-3.5" />
@@ -241,8 +263,8 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
             onClick={() => setActiveTab('analytics')}
             className={`pb-2.5 px-2 text-xs font-bold border-b-2 transition-all flex items-center gap-1.5 cursor-pointer ${
               activeTab === 'analytics'
-                ? 'border-orange-600 text-orange-950 font-bold'
-                : 'border-transparent text-stone-500 hover:text-stone-800'
+                ? 'border-brand-600 text-brand-950 font-bold'
+                : 'border-transparent text-ink-500 hover:text-ink-800'
             }`}
           >
             <BarChart3 className="w-3.5 h-3.5" />
@@ -251,7 +273,7 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
         </div>
 
         {/* Body */}
-        <div className="flex-1 p-6 overflow-y-auto bg-stone-50/40">
+        <div className="flex-1 p-6 overflow-y-auto bg-ink-50/40">
           
           {/* TAB 1: CREATE EVENT */}
           {activeTab === 'create' && (
@@ -260,21 +282,21 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
               {isSubmitted && (
                 <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center gap-2 animate-in fade-in">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  Event published successfully to VIT campus feeds!
+                  Event published.
                 </div>
               )}
 
               {/* Title & AI Assist */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="font-bold text-stone-700 uppercase tracking-wider">Event Title</label>
+                  <label className="font-bold text-ink-700">Event Title</label>
                   <button
                     type="button"
                     onClick={handleEnhanceWithAI}
                     disabled={isEnhancing || (!title && !description)}
-                    className="inline-flex items-center gap-1 text-[11px] font-bold text-orange-700 hover:underline cursor-pointer disabled:opacity-50"
+                    className="inline-flex items-center gap-1 text-xs font-bold text-brand-700 hover:underline cursor-pointer disabled:opacity-50"
                   >
-                    {isEnhancing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3 text-orange-600" />}
+                    {isEnhancing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3 text-brand-600" />}
                     <span>{isEnhancing ? 'Enhancing with AI...' : 'AI Title & Perks Assist'}</span>
                   </button>
                 </div>
@@ -284,18 +306,18 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
                   onChange={(e) => setTitle(e.target.value)}
                   placeholder="e.g. ACM Full-Stack Hack Night & Pizza Social"
                   required
-                  className="w-full bg-white border border-orange-200 rounded-xl px-3.5 py-2.5 text-xs text-stone-900 focus:outline-none focus:border-orange-500 shadow-2xs"
+                  className="w-full bg-white border border-brand-200 rounded-xl px-3.5 py-2.5 text-xs text-ink-900 focus:outline-none focus:border-brand-500 shadow-2xs"
                 />
               </div>
 
               {/* Category & Organizer */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-bold text-stone-700 uppercase tracking-wider mb-1">Category</label>
+                  <label className="block font-bold text-ink-700 mb-1">Category</label>
                   <select
                     value={category}
                     onChange={(e) => setCategory(e.target.value as EventCategory)}
-                    className="w-full bg-white border border-orange-200 rounded-xl px-3 py-2.5 text-xs text-stone-900 focus:outline-none focus:border-orange-500 shadow-2xs"
+                    className="w-full bg-white border border-brand-200 rounded-xl px-3 py-2.5 text-xs text-ink-900 focus:outline-none focus:border-brand-500 shadow-2xs"
                   >
                     {CATEGORIES.map((cat) => (
                       <option key={cat} value={cat}>{cat}</option>
@@ -304,14 +326,14 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="block font-bold text-stone-700 uppercase tracking-wider mb-1">Host Organization</label>
+                  <label className="block font-bold text-ink-700 mb-1">Host Organization</label>
                   <input
                     type="text"
                     value={organizer}
                     onChange={(e) => setOrganizer(e.target.value)}
                     placeholder="e.g. GDSC Campus / Robotics Guild"
                     required
-                    className="w-full bg-white border border-orange-200 rounded-xl px-3 py-2.5 text-xs text-stone-900 focus:outline-none focus:border-orange-500 shadow-2xs"
+                    className="w-full bg-white border border-brand-200 rounded-xl px-3 py-2.5 text-xs text-ink-900 focus:outline-none focus:border-brand-500 shadow-2xs"
                   />
                 </div>
               </div>
@@ -319,26 +341,26 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
               {/* Location & Room */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-bold text-stone-700 uppercase tracking-wider mb-1">Campus Building</label>
+                  <label className="block font-bold text-ink-700 mb-1">Campus Building</label>
                   <input
                     type="text"
                     value={building}
                     onChange={(e) => setBuilding(e.target.value)}
                     placeholder="e.g. Student Union Center"
                     required
-                    className="w-full bg-white border border-orange-200 rounded-xl px-3 py-2.5 text-xs text-stone-900 focus:outline-none focus:border-orange-500 shadow-2xs"
+                    className="w-full bg-white border border-brand-200 rounded-xl px-3 py-2.5 text-xs text-ink-900 focus:outline-none focus:border-brand-500 shadow-2xs"
                   />
                 </div>
 
                 <div>
-                  <label className="block font-bold text-stone-700 uppercase tracking-wider mb-1">Room / Hall</label>
+                  <label className="block font-bold text-ink-700 mb-1">Room / Hall</label>
                   <input
                     type="text"
                     value={room}
                     onChange={(e) => setRoom(e.target.value)}
                     placeholder="e.g. Ballroom A / Lab 102"
                     required
-                    className="w-full bg-white border border-orange-200 rounded-xl px-3 py-2.5 text-xs text-stone-900 focus:outline-none focus:border-orange-500 shadow-2xs"
+                    className="w-full bg-white border border-brand-200 rounded-xl px-3 py-2.5 text-xs text-ink-900 focus:outline-none focus:border-brand-500 shadow-2xs"
                   />
                 </div>
               </div>
@@ -346,53 +368,78 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
               {/* Date & Time */}
               <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <label className="block font-bold text-stone-700 uppercase tracking-wider mb-1">Date</label>
+                  <label className="block font-bold text-ink-700 mb-1">Date</label>
                   <input
                     type="date"
+                    min={campusDateKey()}
                     value={date}
                     onChange={(e) => setDate(e.target.value)}
                     required
-                    className="w-full bg-white border border-orange-200 rounded-xl px-2.5 py-2 text-xs text-stone-900 focus:outline-none focus:border-orange-500 shadow-2xs"
+                    className="w-full bg-white border border-brand-200 rounded-xl px-2.5 py-2 text-xs text-ink-900 focus:outline-none focus:border-brand-500 shadow-2xs"
                   />
                 </div>
                 <div>
-                  <label className="block font-bold text-stone-700 uppercase tracking-wider mb-1">Start Time</label>
+                  <label className="block font-bold text-ink-700 mb-1">Start Time</label>
                   <input
                     type="time"
                     value={startTime}
                     onChange={(e) => setStartTime(e.target.value)}
                     required
-                    className="w-full bg-white border border-orange-200 rounded-xl px-2.5 py-2 text-xs text-stone-900 focus:outline-none focus:border-orange-500 shadow-2xs"
+                    className="w-full bg-white border border-brand-200 rounded-xl px-2.5 py-2 text-xs text-ink-900 focus:outline-none focus:border-brand-500 shadow-2xs"
                   />
                 </div>
                 <div>
-                  <label className="block font-bold text-stone-700 uppercase tracking-wider mb-1">End Time</label>
+                  <label className="block font-bold text-ink-700 mb-1">End Time</label>
                   <input
                     type="time"
                     value={endTime}
                     onChange={(e) => setEndTime(e.target.value)}
                     required
-                    className="w-full bg-white border border-orange-200 rounded-xl px-2.5 py-2 text-xs text-stone-900 focus:outline-none focus:border-orange-500 shadow-2xs"
+                    className="w-full bg-white border border-brand-200 rounded-xl px-2.5 py-2 text-xs text-ink-900 focus:outline-none focus:border-brand-500 shadow-2xs"
                   />
                 </div>
               </div>
 
+              <p className="text-ink-500 -mt-1">
+                Times are campus time ({CAMPUS_TIME_ZONE_LABEL}). An end time earlier than the start means the event runs past midnight.
+              </p>
+
+              {formError && (
+                <div role="alert" className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 font-medium">
+                  {formError}
+                </div>
+              )}
+
+              <div>
+                <label htmlFor="event-capacity" className="block font-bold text-ink-700 mb-1">Capacity</label>
+                <input
+                  id="event-capacity"
+                  type="number"
+                  min={1}
+                  max={50000}
+                  value={capacity}
+                  onChange={(e) => setCapacity(Number(e.target.value))}
+                  required
+                  className="w-32 bg-white border border-brand-200 rounded-xl px-3 py-2 text-xs text-ink-900 focus:outline-none focus:border-brand-500 shadow-2xs"
+                />
+              </div>
+
               {/* Description */}
               <div>
-                <label className="block font-bold text-stone-700 uppercase tracking-wider mb-1">Description</label>
+                <label className="block font-bold text-ink-700 mb-1">Description</label>
                 <textarea
                   rows={3}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="Describe what attendees will learn, build, or experience..."
                   required
-                  className="w-full bg-white border border-orange-200 rounded-xl p-3 text-xs text-stone-900 focus:outline-none focus:border-orange-500 shadow-2xs"
+                  className="w-full bg-white border border-brand-200 rounded-xl p-3 text-xs text-ink-900 focus:outline-none focus:border-brand-500 shadow-2xs"
                 />
               </div>
 
               {/* Perks Checklist */}
               <div>
-                <label className="block font-bold text-stone-700 uppercase tracking-wider mb-1.5">
+                <label className="block font-bold text-ink-700 mb-1.5">
                   Select Included Student Perks
                 </label>
                 <div className="flex flex-wrap gap-1.5">
@@ -403,8 +450,8 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
                       onClick={() => togglePerk(perk)}
                       className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                         selectedPerks.includes(perk)
-                          ? 'bg-orange-600 text-white shadow-2xs'
-                          : 'bg-white border border-orange-200 text-stone-700 hover:bg-orange-50'
+                          ? 'cc-btn-brand shadow-2xs'
+                          : 'bg-white border border-brand-200 text-ink-700 hover:bg-brand-50'
                       }`}
                     >
                       {perk}
@@ -416,7 +463,7 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
               {/* Food Details if selected */}
               {selectedPerks.includes('Free Food 🍕') && (
                 <div>
-                  <label className="block font-bold text-stone-700 uppercase tracking-wider mb-1">
+                  <label className="block font-bold text-ink-700 mb-1">
                     Catering & Refreshments Details
                   </label>
                   <input
@@ -424,7 +471,7 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
                     value={foodDetails}
                     onChange={(e) => setFoodDetails(e.target.value)}
                     placeholder="e.g. Fresh wood-fired pizzas, samosas, and iced drinks"
-                    className="w-full bg-white border border-orange-200 rounded-xl px-3.5 py-2 text-xs text-stone-900 focus:outline-none focus:border-orange-500 shadow-2xs"
+                    className="w-full bg-white border border-brand-200 rounded-xl px-3.5 py-2 text-xs text-ink-900 focus:outline-none focus:border-brand-500 shadow-2xs"
                   />
                 </div>
               )}
@@ -433,7 +480,7 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
               <div className="pt-2 flex justify-end">
                 <button
                   type="submit"
-                  className="px-6 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold transition-all shadow-sm cursor-pointer"
+                  className="cc-btn-brand px-6 py-2.5 rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
                 >
                   Publish Event to Campus
                 </button>
@@ -449,19 +496,20 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
               {bSuccess && (
                 <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center gap-2 animate-in fade-in">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  Announcement dispatched via Push Alert and Email!
+                  Announcement sent.
                 </div>
               )}
 
               <div>
-                <label className="block font-bold text-stone-700 uppercase tracking-wider mb-1">
+                <label className="block font-bold text-ink-700 mb-1">
                   Target Event Channel
                 </label>
                 <select
                   value={selectedEventId}
                   onChange={(e) => setSelectedEventId(e.target.value)}
-                  className="w-full bg-white border border-orange-200 rounded-xl px-3 py-2.5 text-xs text-stone-900 focus:outline-none focus:border-orange-500 shadow-2xs"
+                  className="w-full bg-white border border-brand-200 rounded-xl px-3 py-2.5 text-xs text-ink-900 focus:outline-none focus:border-brand-500 shadow-2xs"
                 >
+                  <option value="">Everyone on campus</option>
                   {existingEvents.map((ev) => (
                     <option key={ev.id} value={ev.id}>
                       {ev.title} ({ev.rsvpCount} registered attendees)
@@ -471,7 +519,7 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
               </div>
 
               <div>
-                <label className="block font-bold text-stone-700 uppercase tracking-wider mb-1">
+                <label className="block font-bold text-ink-700 mb-1">
                   Announcement Headline
                 </label>
                 <input
@@ -480,12 +528,12 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
                   onChange={(e) => setBTitle(e.target.value)}
                   placeholder="e.g. Room Changed to Ballroom B / Catering Menu Updated!"
                   required
-                  className="w-full bg-white border border-orange-200 rounded-xl px-3.5 py-2 text-xs text-stone-900 focus:outline-none focus:border-orange-500 shadow-2xs"
+                  className="w-full bg-white border border-brand-200 rounded-xl px-3.5 py-2 text-xs text-ink-900 focus:outline-none focus:border-brand-500 shadow-2xs"
                 />
               </div>
 
               <div>
-                <label className="block font-bold text-stone-700 uppercase tracking-wider mb-1">
+                <label className="block font-bold text-ink-700 mb-1">
                   Message Content
                 </label>
                 <textarea
@@ -494,21 +542,21 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
                   onChange={(e) => setBBody(e.target.value)}
                   placeholder="Provide important details, agenda updates, or instructions for registered attendees..."
                   required
-                  className="w-full bg-white border border-orange-200 rounded-xl p-3 text-xs text-stone-900 focus:outline-none focus:border-orange-500 shadow-2xs"
+                  className="w-full bg-white border border-brand-200 rounded-xl p-3 text-xs text-ink-900 focus:outline-none focus:border-brand-500 shadow-2xs"
                 />
               </div>
 
               {/* Options */}
-              <div className="space-y-2 bg-orange-50/60 p-3 rounded-xl border border-orange-200/80">
+              <div className="space-y-2 bg-brand-50/60 p-3 rounded-xl border border-brand-200/80">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={sendEmailAlso}
                     onChange={(e) => setSendEmailAlso(e.target.checked)}
-                    className="w-4 h-4 text-orange-600 rounded accent-orange-600"
+                    className="w-4 h-4 text-brand-600 rounded accent-brand-600"
                   />
-                  <span className="font-bold text-stone-900 flex items-center gap-1">
-                    <Mail className="w-3.5 h-3.5 text-orange-600" />
+                  <span className="font-bold text-ink-900 flex items-center gap-1">
+                    <Mail className="w-3.5 h-3.5 text-brand-600" />
                     <span>Send Official Email Alert to all registered student inboxes</span>
                   </span>
                 </label>
@@ -518,9 +566,9 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
                     type="checkbox"
                     checked={bUrgent}
                     onChange={(e) => setBUrgent(e.target.checked)}
-                    className="w-4 h-4 text-orange-600 rounded accent-orange-600"
+                    className="w-4 h-4 text-brand-600 rounded accent-brand-600"
                   />
-                  <span className="font-bold text-stone-900 flex items-center gap-1">
+                  <span className="font-bold text-ink-900 flex items-center gap-1">
                     <Flame className="w-3.5 h-3.5 text-rose-600" />
                     <span>Mark as Urgent (pins to campus live banner)</span>
                   </span>
@@ -530,7 +578,7 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
               <div className="pt-2 flex justify-end">
                 <button
                   type="submit"
-                  className="px-6 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold transition-all shadow-sm cursor-pointer flex items-center gap-1.5"
+                  className="cc-btn-brand px-6 py-2.5 rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer flex items-center gap-1.5"
                 >
                   <Send className="w-3.5 h-3.5" />
                   <span>Dispatch Announcement</span>
@@ -543,17 +591,17 @@ export const FacultyDashboardModal: React.FC<FacultyDashboardModalProps> = ({
           {/* TAB 3: ANALYTICS & ROSTER */}
           {activeTab === 'analytics' && (
             <div className="space-y-4 text-xs">
-              <p className="text-stone-600 font-medium">Real-time RSVP registrations across all hosted campus events:</p>
+              <p className="text-ink-600 font-medium">Real-time RSVP registrations across all hosted campus events:</p>
               <div className="space-y-2">
                 {existingEvents.map((ev) => (
-                  <div key={ev.id} className="p-3 bg-white rounded-xl border border-orange-200/80 shadow-2xs flex items-center justify-between">
+                  <div key={ev.id} className="p-3 bg-white rounded-xl border border-brand-200/80 shadow-2xs flex items-center justify-between">
                     <div>
-                      <h4 className="font-bold text-stone-900 text-xs">{ev.title}</h4>
-                      <p className="text-[11px] text-stone-500">{ev.displayTime} • {ev.building}</p>
+                      <h4 className="font-bold text-ink-900 text-xs">{ev.title}</h4>
+                      <p className="text-xs text-ink-500">{formatEventWhen(ev)} • {ev.building}</p>
                     </div>
                     <div className="text-right">
-                      <span className="font-bold text-orange-600 text-sm">{ev.rsvpCount}</span>
-                      <span className="text-[11px] text-stone-400">/{ev.capacity} spots</span>
+                      <span className="font-bold text-brand-600 text-sm">{ev.rsvpCount}</span>
+                      <span className="text-xs text-ink-400">/{ev.capacity} spots</span>
                     </div>
                   </div>
                 ))}

@@ -1,59 +1,109 @@
 import { CampusEvent } from '../types';
+import {
+  CAMPUS_TIME_ZONE,
+  eventEndMs,
+  eventStartMs,
+  eventsOverlap,
+  now,
+  toCalendarUtcStamp,
+} from '../utils/campusTime';
+
+/**
+ * Calendar exports always carry absolute UTC instants, so an event lands at
+ * the right moment in any calendar app, whatever time zone the student is in.
+ */
+
+function eventDetails(event: CampusEvent): string {
+  const perks = (event.perks || []).join(', ');
+  return [event.description, perks ? `Perks: ${perks}` : '', `Location: ${event.building}, ${event.room}`]
+    .filter(Boolean)
+    .join('\n\n');
+}
 
 export function generateGoogleCalendarUrl(event: CampusEvent): string {
-  const title = encodeURIComponent(event.title);
-  const details = encodeURIComponent(`${event.description}\n\nPerks: ${event.perks.join(', ')}\nLocation: ${event.building} - ${event.room}`);
-  const location = encodeURIComponent(`${event.building}, Room ${event.room}, Campus`);
-
-  // Simple date format conversion YYYYMMDDTHHMMSSZ
-  const dateStr = event.date.replace(/-/g, '');
-  const startHour = event.startTime.replace(':', '') + '00';
-  const endHour = event.endTime.replace(':', '') + '00';
-  const dates = `${dateStr}T${startHour}/${dateStr}T${endHour}`;
-
-  return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&details=${details}&location=${location}&dates=${dates}`;
+  const params = new URLSearchParams({
+    action: 'TEMPLATE',
+    text: event.title,
+    details: eventDetails(event),
+    location: `${event.building}, ${event.room}`,
+    dates: `${toCalendarUtcStamp(eventStartMs(event))}/${toCalendarUtcStamp(eventEndMs(event))}`,
+    ctz: CAMPUS_TIME_ZONE,
+  });
+  return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
 
 export function generateOutlookCalendarUrl(event: CampusEvent): string {
-  const title = encodeURIComponent(event.title);
-  const details = encodeURIComponent(`${event.description}\n\nPerks: ${event.perks.join(', ')}\nLocation: ${event.building} - ${event.room}`);
-  const location = encodeURIComponent(`${event.building}, Room ${event.room}`);
-  
-  // Format as ISO string YYYY-MM-DDTHH:MM:SS
-  const startIso = `${event.date}T${event.startTime}:00`;
-  const endIso = `${event.date}T${event.endTime}:00`;
-
-  return `https://outlook.live.com/calendar/0/deeplink/compose?subject=${title}&body=${details}&location=${location}&startdt=${startIso}&enddt=${endIso}`;
+  const params = new URLSearchParams({
+    path: '/calendar/action/compose',
+    rru: 'addevent',
+    subject: event.title,
+    body: eventDetails(event),
+    location: `${event.building}, ${event.room}`,
+    startdt: new Date(eventStartMs(event)).toISOString(),
+    enddt: new Date(eventEndMs(event)).toISOString(),
+  });
+  return `https://outlook.live.com/calendar/0/deeplink/compose?${params.toString()}`;
 }
 
-export function downloadIcsFile(event: CampusEvent) {
-  const dateStr = event.date.replace(/-/g, '');
-  const startHour = event.startTime.replace(':', '') + '00';
-  const endHour = event.endTime.replace(':', '') + '00';
+/** Escape text for an iCalendar property value (RFC 5545 §3.3.11). */
+function icsEscape(value: string): string {
+  return (value || '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\r?\n/g, '\\n')
+    .replace(/,/g, '\\,')
+    .replace(/;/g, '\;');
+}
 
-  const icsData = [
+function icsEventBlock(event: CampusEvent): string[] {
+  return [
+    'BEGIN:VEVENT',
+    `UID:${event.id}-${event.date}@campusconnect`,
+    `DTSTAMP:${toCalendarUtcStamp(now())}`,
+    `DTSTART:${toCalendarUtcStamp(eventStartMs(event))}`,
+    `DTEND:${toCalendarUtcStamp(eventEndMs(event))}`,
+    `SUMMARY:${icsEscape(event.title)}`,
+    `DESCRIPTION:${icsEscape(event.shortDesc || event.description)}`,
+    `LOCATION:${icsEscape(`${event.building}, ${event.room}`)}`,
+    'STATUS:CONFIRMED',
+    'BEGIN:VALARM',
+    'ACTION:DISPLAY',
+    'DESCRIPTION:Starts in 30 minutes',
+    'TRIGGER:-PT30M',
+    'END:VALARM',
+    'END:VEVENT',
+  ];
+}
+
+function downloadIcs(filename: string, events: CampusEvent[]) {
+  const ics = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//CampusPulse//Campus Event Discovery//EN',
+    'PRODID:-//CampusConnect//Campus Events//EN',
     'CALSCALE:GREGORIAN',
-    'BEGIN:VEVENT',
-    `SUMMARY:${event.title}`,
-    `DESCRIPTION:${event.shortDesc.replace(/\n/g, ' ')}`,
-    `LOCATION:${event.building} Room ${event.room}`,
-    `DTSTART:${dateStr}T${startHour}`,
-    `DTEND:${dateStr}T${endHour}`,
-    `STATUS:CONFIRMED`,
-    'END:VEVENT',
+    'METHOD:PUBLISH',
+    ...events.flatMap(icsEventBlock),
     'END:VCALENDAR',
   ].join('\r\n');
 
-  const blob = new Blob([icsData], { type: 'text/calendar;charset=utf-8' });
+  const url = URL.createObjectURL(new Blob([ics], { type: 'text/calendar;charset=utf-8' }));
   const link = document.createElement('a');
-  link.href = window.URL.createObjectURL(blob);
-  link.setAttribute('download', `${event.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.ics`);
+  link.href = url;
+  link.download = filename;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+export function downloadIcsFile(event: CampusEvent) {
+  const slug = event.title.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'event';
+  downloadIcs(`${slug}.ics`, [event]);
+}
+
+/** One .ics file holding every event, instead of one download per event. */
+export function downloadIcsBundle(events: CampusEvent[]) {
+  if (events.length === 0) return;
+  downloadIcs('my-campus-schedule.ics', events);
 }
 
 export function detectScheduleConflict(
@@ -61,20 +111,9 @@ export function detectScheduleConflict(
   allEvents: CampusEvent[] = [],
   rsvpdEventIds: string[] = []
 ): { hasConflict: boolean; conflictingEvent?: CampusEvent } {
-  const rsvpdList = (allEvents || []).filter((e) => (rsvpdEventIds || []).includes(e.id) && e.id !== targetEvent.id);
-  
-  for (const existing of rsvpdList) {
-    if (existing.date === targetEvent.date) {
-      // Compare time ranges
-      if (
-        (targetEvent.startTime >= existing.startTime && targetEvent.startTime < existing.endTime) ||
-        (targetEvent.endTime > existing.startTime && targetEvent.endTime <= existing.endTime) ||
-        (targetEvent.startTime <= existing.startTime && targetEvent.endTime >= existing.endTime)
-      ) {
-        return { hasConflict: true, conflictingEvent: existing };
-      }
-    }
-  }
-
-  return { hasConflict: false };
+  const mine = new Set(rsvpdEventIds || []);
+  const conflictingEvent = (allEvents || []).find(
+    (e) => e.id !== targetEvent.id && mine.has(e.id) && eventsOverlap(e, targetEvent)
+  );
+  return conflictingEvent ? { hasConflict: true, conflictingEvent } : { hasConflict: false };
 }

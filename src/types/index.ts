@@ -34,11 +34,13 @@ export interface CampusEvent {
   building: string;
   room: string;
   mapCoords: { x: number; y: number }; // percentage 0-100 for campus map
-  date: string; // YYYY-MM-DD
-  startTime: string; // e.g. "17:00"
-  endTime: string; // e.g. "19:00"
-  displayTime: string; // e.g. "Today 5:00 PM - 7:00 PM"
-  isToday: boolean;
+  date: string; // YYYY-MM-DD, campus calendar day
+  startTime: string; // "17:00", campus wall-clock time
+  endTime: string; // "19:00"; earlier than startTime means it ends after midnight
+  /** @deprecated Stale by design. Use formatEventWhen() from utils/campusTime. */
+  displayTime?: string;
+  /** @deprecated Use isEventToday() from utils/campusTime. */
+  isToday?: boolean;
   perks: PerkType[];
   foodDetails?: string;
   tags: string[];
@@ -96,6 +98,7 @@ export interface CampusResource {
   building: string;
   campusZone: 'North Campus' | 'Central Hub' | 'South Quad' | 'West Tech Park';
   openHours: string;
+  /** @deprecated Stale by design. Use getOpenStatus(openHours) from utils/openHours. */
   currentStatus: 'Open Now' | 'Drop-in Ready' | 'Closing Soon' | 'By Appointment';
   walkInsAllowed: boolean;
   contactInfo: string;
@@ -140,6 +143,7 @@ export interface NotificationItem {
   id: string;
   title: string;
   body: string;
+  /** @deprecated Display label only. `createdAt` is the source of truth. */
   timestamp: string;
   createdAt?: number;
   type: 'food_drop' | 'reminder' | 'club_broadcast' | 'match_alert' | 'faculty_note';
@@ -199,6 +203,7 @@ export interface UserProfile {
   email?: string;
   major: string;
   year: 'Freshman' | 'Sophomore' | 'Junior' | 'Senior' | 'Graduate';
+  graduationYear?: string;
   interests: string[];
   preferredPerks: PerkType[];
   campusZone: string;

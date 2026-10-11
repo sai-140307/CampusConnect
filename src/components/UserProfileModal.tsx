@@ -1,4 +1,7 @@
 import React, { useState } from 'react';
+import { useModal } from '../hooks/useModal';
+import { formatEventWhen } from '../utils/campusTime';
+import { OpenStatusBadge } from './OpenStatusBadge';
 import { 
   X, 
   User, 
@@ -78,6 +81,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   const [preferredPerks, setPreferredPerks] = useState<PerkType[]>(userProfile?.preferredPerks || []);
   const [isSavedNotice, setIsSavedNotice] = useState(false);
 
+  useModal(isOpen, onClose);
+
   if (!isOpen) return null;
 
   const toggleInterest = (interest: string) => {
@@ -115,40 +120,40 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   const savedResourcesList = (allResources || []).filter((r) => (userProfile?.savedResources || []).includes(r.id));
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs overflow-y-auto">
+    <div className="cc-overlay fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink-900/40 backdrop-blur-xs overflow-y-auto" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div 
-        className="relative w-full max-w-2xl bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden my-8 animate-in fade-in duration-150 text-slate-900"
+        className="cc-dialog relative w-full max-w-2xl bg-white border border-ink-200 rounded-2xl shadow-xl overflow-hidden my-8 text-ink-900"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="p-6 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-4">
+        <div className="p-6 bg-ink-50 border-b border-ink-200 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl bg-slate-900 text-white font-bold text-lg flex items-center justify-center shadow-xs">
+            <div className="cc-btn-ink w-12 h-12 rounded-xl font-bold text-lg flex items-center justify-center shadow-xs">
               {userProfile.name.charAt(0)}
             </div>
             <div>
-              <h2 className="text-xl font-bold text-slate-900">{userProfile.name}</h2>
-              <p className="text-xs text-slate-500 font-medium">{userProfile.major} • {userProfile.year}</p>
-              <p className="text-[11px] text-slate-400 font-medium">Vellore Institute of Technology</p>
+              <h2 className="text-xl font-bold text-ink-900">{userProfile.name}</h2>
+              <p className="text-xs text-ink-500 font-medium">{userProfile.major} • {userProfile.year}</p>
+              <p className="text-xs text-ink-400 font-medium">Vellore Institute of Technology</p>
             </div>
           </div>
 
           <button
             onClick={onClose}
-            className="p-2 rounded-full bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 hover:text-slate-900 transition-colors"
+            className="p-2 rounded-full bg-white border border-ink-200 hover:bg-ink-100 text-ink-600 hover:text-ink-900 transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Tab Header */}
-        <div className="flex border-b border-slate-200 px-6 bg-white gap-2">
+        <div className="flex border-b border-ink-200 px-6 bg-white gap-2">
           <button
             onClick={() => setActiveTab('profile')}
             className={`py-3 px-2 text-xs font-semibold border-b-2 transition-all flex items-center gap-1.5 ${
               activeTab === 'profile'
-                ? 'border-slate-900 text-slate-900'
-                : 'border-transparent text-slate-500 hover:text-slate-800'
+                ? 'border-ink-900 text-ink-900'
+                : 'border-transparent text-ink-500 hover:text-ink-800'
             }`}
           >
             <User className="w-3.5 h-3.5" />
@@ -159,8 +164,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
             onClick={() => setActiveTab('rsvps')}
             className={`py-3 px-2 text-xs font-semibold border-b-2 transition-all flex items-center gap-1.5 ${
               activeTab === 'rsvps'
-                ? 'border-slate-900 text-slate-900'
-                : 'border-transparent text-slate-500 hover:text-slate-800'
+                ? 'border-ink-900 text-ink-900'
+                : 'border-transparent text-ink-500 hover:text-ink-800'
             }`}
           >
             <Calendar className="w-3.5 h-3.5" />
@@ -171,8 +176,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
             onClick={() => setActiveTab('clubs')}
             className={`py-3 px-2 text-xs font-semibold border-b-2 transition-all flex items-center gap-1.5 ${
               activeTab === 'clubs'
-                ? 'border-slate-900 text-slate-900'
-                : 'border-transparent text-slate-500 hover:text-slate-800'
+                ? 'border-ink-900 text-ink-900'
+                : 'border-transparent text-ink-500 hover:text-ink-800'
             }`}
           >
             <Users className="w-3.5 h-3.5" />
@@ -183,8 +188,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
             onClick={() => setActiveTab('saved')}
             className={`py-3 px-2 text-xs font-semibold border-b-2 transition-all flex items-center gap-1.5 ${
               activeTab === 'saved'
-                ? 'border-slate-900 text-slate-900'
-                : 'border-transparent text-slate-500 hover:text-slate-800'
+                ? 'border-ink-900 text-ink-900'
+                : 'border-transparent text-ink-500 hover:text-ink-800'
             }`}
           >
             <Bookmark className="w-3.5 h-3.5" />
@@ -200,33 +205,33 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
             <form onSubmit={handleSaveProfile} className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-700">Full Name</label>
+                  <label className="text-xs font-semibold text-ink-700">Full Name</label>
                   <input
                     type="text"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-slate-800"
+                    className="w-full bg-ink-50 border border-ink-200 rounded-xl px-3 py-2 text-xs sm:text-sm text-ink-900 focus:outline-none focus:border-ink-800"
                   />
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-700">Academic Major</label>
+                  <label className="text-xs font-semibold text-ink-700">Academic Major</label>
                   <input
                     type="text"
                     value={major}
                     onChange={(e) => setMajor(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-slate-800"
+                    className="w-full bg-ink-50 border border-ink-200 rounded-xl px-3 py-2 text-xs sm:text-sm text-ink-900 focus:outline-none focus:border-ink-800"
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-700">Academic Standing</label>
+                  <label className="text-xs font-semibold text-ink-700">Academic Standing</label>
                   <select
                     value={year}
                     onChange={(e) => setYear(e.target.value as any)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-slate-800"
+                    className="w-full bg-ink-50 border border-ink-200 rounded-xl px-3 py-2 text-xs sm:text-sm text-ink-900 focus:outline-none focus:border-ink-800"
                   >
                     <option value="Freshman">Freshman</option>
                     <option value="Sophomore">Sophomore</option>
@@ -237,11 +242,11 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-700">Primary Campus Zone</label>
+                  <label className="text-xs font-semibold text-ink-700">Primary Campus Zone</label>
                   <select
                     value={campusZone}
                     onChange={(e) => setCampusZone(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-slate-800"
+                    className="w-full bg-ink-50 border border-ink-200 rounded-xl px-3 py-2 text-xs sm:text-sm text-ink-900 focus:outline-none focus:border-ink-800"
                   >
                     <option value="Central Hub">Central Hub</option>
                     <option value="West Tech Park">West Tech Park</option>
@@ -253,7 +258,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
               {/* Interests */}
               <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1.5">
+                <label className="text-xs font-semibold text-ink-700 block mb-1.5">
                   Academic & Extracurricular Interests (Powers AI Matchmaking)
                 </label>
                 <div className="flex flex-wrap gap-1.5">
@@ -266,8 +271,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                         onClick={() => toggleInterest(tag)}
                         className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${
                           isSelected
-                            ? 'bg-slate-900 text-white'
-                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                            ? 'cc-btn-ink'
+                            : 'bg-ink-100 text-ink-700 hover:bg-ink-200'
                         }`}
                       >
                         {tag}
@@ -279,7 +284,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
               {/* Preferred Perks */}
               <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1.5">
+                <label className="text-xs font-semibold text-ink-700 block mb-1.5">
                   Preferred Perks & Incentives
                 </label>
                 <div className="flex flex-wrap gap-1.5">
@@ -292,8 +297,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                         onClick={() => togglePerk(perk)}
                         className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${
                           isSelected
-                            ? 'bg-slate-900 text-white'
-                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                            ? 'cc-btn-ink'
+                            : 'bg-ink-100 text-ink-700 hover:bg-ink-200'
                         }`}
                       >
                         {perk}
@@ -303,7 +308,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                 </div>
               </div>
 
-              <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
+              <div className="pt-3 border-t border-ink-100 flex items-center justify-between">
                 {isSavedNotice ? (
                   <span className="text-xs font-semibold text-emerald-700 flex items-center gap-1">
                     <CheckCircle2 className="w-3.5 h-3.5" />
@@ -312,7 +317,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                 ) : <span />}
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white shadow-xs transition-all"
+                  className="cc-btn-ink px-5 py-2 rounded-xl text-xs font-semibold shadow-xs transition-all"
                 >
                   Save Profile
                 </button>
@@ -324,12 +329,12 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           {activeTab === 'rsvps' && (
             <div className="space-y-2">
               {rsvpdEventsList.length === 0 ? (
-                <p className="text-xs text-slate-400 text-center py-8">No active RSVPs found.</p>
+                <p className="text-xs text-ink-400 text-center py-8">No active RSVPs found.</p>
               ) : (
                 rsvpdEventsList.map((ev) => (
                   <div
                     key={ev.id}
-                    className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-3"
+                    className="p-3 rounded-xl bg-ink-50 border border-ink-200 flex items-center justify-between gap-3"
                   >
                     <div 
                       onClick={() => {
@@ -338,12 +343,12 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                       }}
                       className="cursor-pointer truncate"
                     >
-                      <h4 className="text-xs font-bold text-slate-900 hover:text-slate-700 truncate">{ev.title}</h4>
-                      <p className="text-[11px] text-slate-500">{ev.displayTime} • {ev.building}</p>
+                      <h4 className="text-xs font-bold text-ink-900 hover:text-ink-700 truncate">{ev.title}</h4>
+                      <p className="text-xs text-ink-500">{formatEventWhen(ev)} • {ev.building}</p>
                     </div>
                     <button
                       onClick={() => onRemoveRsvp(ev.id)}
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                      className="p-1.5 rounded-lg text-ink-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
                       title="Cancel RSVP"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -358,12 +363,12 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           {activeTab === 'clubs' && (
             <div className="space-y-2">
               {joinedClubsList.length === 0 ? (
-                <p className="text-xs text-slate-400 text-center py-8">No joined clubs found.</p>
+                <p className="text-xs text-ink-400 text-center py-8">No joined clubs found.</p>
               ) : (
                 joinedClubsList.map((cl) => (
                   <div
                     key={cl.id}
-                    className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-3"
+                    className="p-3 rounded-xl bg-ink-50 border border-ink-200 flex items-center justify-between gap-3"
                   >
                     <div 
                       onClick={() => {
@@ -372,12 +377,12 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                       }}
                       className="cursor-pointer truncate"
                     >
-                      <h4 className="text-xs font-bold text-slate-900 hover:text-slate-700 truncate">{cl.name}</h4>
-                      <p className="text-[11px] text-slate-500">{cl.meetingSchedule} • {cl.location}</p>
+                      <h4 className="text-xs font-bold text-ink-900 hover:text-ink-700 truncate">{cl.name}</h4>
+                      <p className="text-xs text-ink-500">{cl.meetingSchedule} • {cl.location}</p>
                     </div>
                     <button
                       onClick={() => onRemoveClub(cl.id)}
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                      className="p-1.5 rounded-lg text-ink-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
                       title="Leave Club"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -392,12 +397,12 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           {activeTab === 'saved' && (
             <div className="space-y-2">
               {savedResourcesList.length === 0 ? (
-                <p className="text-xs text-slate-400 text-center py-8">No saved resources found.</p>
+                <p className="text-xs text-ink-400 text-center py-8">No saved resources found.</p>
               ) : (
                 savedResourcesList.map((res) => (
                   <div
                     key={res.id}
-                    className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-3"
+                    className="p-3 rounded-xl bg-ink-50 border border-ink-200 flex items-center justify-between gap-3"
                   >
                     <div 
                       onClick={() => {
@@ -406,12 +411,12 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                       }}
                       className="cursor-pointer truncate"
                     >
-                      <h4 className="text-xs font-bold text-slate-900 hover:text-slate-700 truncate">{res.name}</h4>
-                      <p className="text-[11px] text-slate-500">{res.currentStatus} • {res.location}</p>
+                      <h4 className="text-xs font-bold text-ink-900 hover:text-ink-700 truncate">{res.name}</h4>
+                      <p className="text-xs text-ink-500"><OpenStatusBadge openHours={res.openHours} plain /> • {res.location}</p>
                     </div>
                     <button
                       onClick={() => onRemoveResource(res.id)}
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                      className="p-1.5 rounded-lg text-ink-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
                       title="Remove Bookmark"
                     >
                       <Trash2 className="w-3.5 h-3.5" />

@@ -9,6 +9,22 @@
     <meta property="og:description" content="CampusConnect - Unified campus discovery and student engagement platform for Vellore Institute of Technology." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#2447e0" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%232447e0'/%3E%3Ccircle cx='20' cy='44' r='6' fill='%23fff'/%3E%3Ccircle cx='44' cy='44' r='6' fill='%23fff'/%3E%3Ccircle cx='32' cy='20' r='6' fill='%23f5a524'/%3E%3Cpath d='M32 20 20 44M32 20l12 24M20 44h24' stroke='%23fff' stroke-width='3' fill='none'/%3E%3C/svg%3E" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Hanken+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <script>
+      // Apply the saved theme before first paint so the page never flashes the wrong colours.
+      (function () {
+        try {
+          var saved = localStorage.getItem('campusconnect_theme_v1');
+          var dark = saved ? saved === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+          if (dark) document.addEventListener('DOMContentLoaded', function () { document.body.classList.add('dark'); });
+          document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
