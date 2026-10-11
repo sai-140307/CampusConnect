@@ -1,4 +1,5 @@
 import { CampusEvent, CampusClub, CampusResource, AIMatchResult, UserProfile, PerkType } from '../types';
+import { formatEventWhen } from '../utils/campusTime';
 
 export async function requestAIMatch(
   query: string,
@@ -11,7 +12,14 @@ export async function requestAIMatch(
     const res = await fetch('/api/ai/match', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, events, clubs, resources, userProfile }),
+      // Send each event with a fresh, human-readable time so the model never sees stale labels.
+      body: JSON.stringify({
+        query,
+        events: events.map((e) => ({ ...e, displayTime: formatEventWhen(e) })),
+        clubs,
+        resources,
+        userProfile: { name: userProfile.name, major: userProfile.major, year: userProfile.year, interests: userProfile.interests },
+      }),
     });
 
     if (res.ok) {
@@ -232,14 +240,14 @@ function clientSideMatchHeuristic(
   else if (q.includes('tutor') || q.includes('study')) persona = 'Academic Striver';
   else if (q.includes('resume') || q.includes('job')) persona = 'Career Accelerator';
 
-  const actionPlan = [];
+  const actionPlan: AIMatchResult['suggestedActionPlan'] = [];
   if (rankedEvents[0]) {
     actionPlan.push({
       step: 1,
       action: `RSVP to ${rankedEvents[0].event.title}`,
       targetTitle: rankedEvents[0].event.title,
       type: 'event' as const,
-      timeOrLocation: `${rankedEvents[0].event.building} (${rankedEvents[0].event.displayTime})`,
+      timeOrLocation: `${rankedEvents[0].event.building} (${formatEventWhen(rankedEvents[0].event)})`,
       why: rankedEvents[0].reason,
     });
   }
@@ -266,7 +274,7 @@ function clientSideMatchHeuristic(
 
   return {
     query,
-    summary: `We analyzed 30+ active campus happenings and found high-relevance matches for "${query}". Check out the recommended activities and facilities below to get started!`,
+    summary: `Here is what fits "${query}" from ${events.length} upcoming events, ${clubs.length} clubs and ${resources.length} campus services.`,
     personaMatch: persona,
     suggestedActionPlan: actionPlan,
     matchedEvents: rankedEvents,

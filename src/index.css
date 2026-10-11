@@ -1,53 +1,563 @@
 @import "tailwindcss";
 
-@custom-variant dark (&:where(.dark, .dark *));
+/*
+ * CampusConnect design system
+ * ---------------------------------------------------------------------------
+ * Colour:  "ink" is the neutral scale, "brand" is campus ultramarine, and
+ *          Tailwind's amber is the marigold accent used for anything live or
+ *          happening today.
+ * Type:    Bricolage Grotesque for headings (font-display), Hanken Grotesk for
+ *          everything else.
+ * Motion:  one orchestrated entrance on the home hero, and short transitions
+ *          that answer an action (open, switch tab, confirm). All of it is
+ *          switched off for people who prefer reduced motion.
+ * Dark:    add class "dark" to <body>. The colour scales are remapped there,
+ *          so components do not need dark: variants. Wrap anything that must
+ *          keep fixed colours (photos, the campus clock) in .cc-static.
+ */
+
+@theme {
+  --font-sans: "Hanken Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Bricolage Grotesque", "Hanken Grotesk", ui-sans-serif, system-ui, sans-serif;
+
+  --color-paper: #f4f5fa;
+  --color-ink-50: #f6f7fb;
+  --color-ink-100: #eceef6;
+  --color-ink-200: #dcdfec;
+  --color-ink-300: #c1c6da;
+  --color-ink-400: #8d94ae;
+  --color-ink-500: #656c88;
+  --color-ink-600: #4a5170;
+  --color-ink-700: #363c59;
+  --color-ink-800: #242941;
+  --color-ink-900: #161a2e;
+  --color-ink-950: #0c0e1f;
+  --color-brand-50: #eef4ff;
+  --color-brand-100: #dbe6ff;
+  --color-brand-200: #bfd2ff;
+  --color-brand-300: #93b2ff;
+  --color-brand-400: #6088fb;
+  --color-brand-500: #3b63f2;
+  --color-brand-600: #2447e0;
+  --color-brand-700: #1c37c2;
+  --color-brand-800: #1c309c;
+  --color-brand-900: #1b2d7b;
+  --color-brand-950: #131d4d;
+
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.2rem;
+  --text-sm: 0.9rem;
+  --text-sm--line-height: 1.35rem;
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+:root {
+  --cc-surface: #ffffff;
+  --cc-brand: var(--color-brand-600);
+  --cc-brand-hover: var(--color-brand-700);
+  --cc-on-brand: #ffffff;
+  --cc-focus: var(--color-brand-500);
+  --cc-shadow-color: 228 45% 20%;
+
+  /* Untouched copies of the accent scales, used to derive dark mode and to restore .cc-static. */
+  --o-amber-50: var(--color-amber-50);
+  --o-amber-100: var(--color-amber-100);
+  --o-amber-200: var(--color-amber-200);
+  --o-amber-300: var(--color-amber-300);
+  --o-amber-400: var(--color-amber-400);
+  --o-amber-500: var(--color-amber-500);
+  --o-amber-600: var(--color-amber-600);
+  --o-amber-700: var(--color-amber-700);
+  --o-amber-800: var(--color-amber-800);
+  --o-amber-900: var(--color-amber-900);
+  --o-amber-950: var(--color-amber-950);
+  --o-emerald-50: var(--color-emerald-50);
+  --o-emerald-100: var(--color-emerald-100);
+  --o-emerald-200: var(--color-emerald-200);
+  --o-emerald-300: var(--color-emerald-300);
+  --o-emerald-400: var(--color-emerald-400);
+  --o-emerald-500: var(--color-emerald-500);
+  --o-emerald-600: var(--color-emerald-600);
+  --o-emerald-700: var(--color-emerald-700);
+  --o-emerald-800: var(--color-emerald-800);
+  --o-emerald-900: var(--color-emerald-900);
+  --o-emerald-950: var(--color-emerald-950);
+  --o-rose-50: var(--color-rose-50);
+  --o-rose-100: var(--color-rose-100);
+  --o-rose-200: var(--color-rose-200);
+  --o-rose-300: var(--color-rose-300);
+  --o-rose-400: var(--color-rose-400);
+  --o-rose-500: var(--color-rose-500);
+  --o-rose-600: var(--color-rose-600);
+  --o-rose-700: var(--color-rose-700);
+  --o-rose-800: var(--color-rose-800);
+  --o-rose-900: var(--color-rose-900);
+  --o-rose-950: var(--color-rose-950);
+}
+
+body.dark {
+  --color-paper: #0b0d1c;
+  --cc-surface: #131630;
+  --cc-brand: #4f74f2;
+  --cc-brand-hover: #6a89f6;
+  --cc-on-brand: #ffffff;
+  --cc-focus: #93b2ff;
+  --cc-shadow-color: 232 60% 2%;
+  --color-ink-50: #12152a;
+  --color-ink-100: #191d36;
+  --color-ink-200: #272c4a;
+  --color-ink-300: #383f63;
+  --color-ink-400: #6f7799;
+  --color-ink-500: #929ab8;
+  --color-ink-600: #b1b7cf;
+  --color-ink-700: #cbd0e2;
+  --color-ink-800: #e0e3ef;
+  --color-ink-900: #eff1f8;
+  --color-ink-950: #f9fafd;
+  --color-brand-50: #141b3d;
+  --color-brand-100: #19234f;
+  --color-brand-200: #24336f;
+  --color-brand-300: #30469a;
+  --color-brand-400: #4a6ae0;
+  --color-brand-500: #5b80f5;
+  --color-brand-600: #4f74f2;
+  --color-brand-700: #93b2ff;
+  --color-brand-800: #b4c9ff;
+  --color-brand-900: #d3dfff;
+  --color-brand-950: #e9efff;
+  --color-amber-50: color-mix(in oklab, var(--o-amber-500) 13%, var(--cc-surface));
+  --color-amber-100: color-mix(in oklab, var(--o-amber-500) 20%, var(--cc-surface));
+  --color-amber-200: color-mix(in oklab, var(--o-amber-500) 34%, var(--cc-surface));
+  --color-amber-300: color-mix(in oklab, var(--o-amber-500) 55%, var(--cc-surface));
+  --color-amber-700: var(--o-amber-300);
+  --color-amber-800: var(--o-amber-200);
+  --color-amber-900: var(--o-amber-100);
+  --color-amber-950: var(--o-amber-50);
+  --color-emerald-50: color-mix(in oklab, var(--o-emerald-500) 13%, var(--cc-surface));
+  --color-emerald-100: color-mix(in oklab, var(--o-emerald-500) 20%, var(--cc-surface));
+  --color-emerald-200: color-mix(in oklab, var(--o-emerald-500) 34%, var(--cc-surface));
+  --color-emerald-300: color-mix(in oklab, var(--o-emerald-500) 55%, var(--cc-surface));
+  --color-emerald-700: var(--o-emerald-300);
+  --color-emerald-800: var(--o-emerald-200);
+  --color-emerald-900: var(--o-emerald-100);
+  --color-emerald-950: var(--o-emerald-50);
+  --color-rose-50: color-mix(in oklab, var(--o-rose-500) 13%, var(--cc-surface));
+  --color-rose-100: color-mix(in oklab, var(--o-rose-500) 20%, var(--cc-surface));
+  --color-rose-200: color-mix(in oklab, var(--o-rose-500) 34%, var(--cc-surface));
+  --color-rose-300: color-mix(in oklab, var(--o-rose-500) 55%, var(--cc-surface));
+  --color-rose-700: var(--o-rose-300);
+  --color-rose-800: var(--o-rose-200);
+  --color-rose-900: var(--o-rose-100);
+  --color-rose-950: var(--o-rose-50);
+}
+
+/* Fixed colours, whatever the theme: photos with overlaid text, the campus clock, the tour player. */
+.cc-static {
+  --color-ink-50: #f6f7fb;
+  --color-ink-100: #eceef6;
+  --color-ink-200: #dcdfec;
+  --color-ink-300: #c1c6da;
+  --color-ink-400: #8d94ae;
+  --color-ink-500: #656c88;
+  --color-ink-600: #4a5170;
+  --color-ink-700: #363c59;
+  --color-ink-800: #242941;
+  --color-ink-900: #161a2e;
+  --color-ink-950: #0c0e1f;
+  --color-brand-50: #eef4ff;
+  --color-brand-100: #dbe6ff;
+  --color-brand-200: #bfd2ff;
+  --color-brand-300: #93b2ff;
+  --color-brand-400: #6088fb;
+  --color-brand-500: #3b63f2;
+  --color-brand-600: #2447e0;
+  --color-brand-700: #1c37c2;
+  --color-brand-800: #1c309c;
+  --color-brand-900: #1b2d7b;
+  --color-brand-950: #131d4d;
+  --color-amber-50: var(--o-amber-50);
+  --color-amber-100: var(--o-amber-100);
+  --color-amber-200: var(--o-amber-200);
+  --color-amber-300: var(--o-amber-300);
+  --color-amber-700: var(--o-amber-700);
+  --color-amber-800: var(--o-amber-800);
+  --color-amber-900: var(--o-amber-900);
+  --color-amber-950: var(--o-amber-950);
+  --color-emerald-50: var(--o-emerald-50);
+  --color-emerald-100: var(--o-emerald-100);
+  --color-emerald-200: var(--o-emerald-200);
+  --color-emerald-300: var(--o-emerald-300);
+  --color-emerald-700: var(--o-emerald-700);
+  --color-emerald-800: var(--o-emerald-800);
+  --color-emerald-900: var(--o-emerald-900);
+  --color-emerald-950: var(--o-emerald-950);
+  --color-rose-50: var(--o-rose-50);
+  --color-rose-100: var(--o-rose-100);
+  --color-rose-200: var(--o-rose-200);
+  --color-rose-300: var(--o-rose-300);
+  --color-rose-700: var(--o-rose-700);
+  --color-rose-800: var(--o-rose-800);
+  --color-rose-900: var(--o-rose-900);
+  --color-rose-950: var(--o-rose-950);
+}
 
 @layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+
   body {
-    background-color: #FFF9F2;
-    color: #1C1917;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    font-family: var(--font-sans);
+    background-color: var(--color-paper);
+    color: var(--color-ink-900);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    transition: background-color 0.2s ease, color 0.2s ease;
+    text-rendering: optimizeLegibility;
   }
 
-  html.dark body,
-  .dark body,
-  body.dark {
-    background-color: #0B0F19;
-    color: #F8FAFC;
+  ::selection {
+    background: var(--color-brand-600);
+    color: #fff;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--cc-focus);
+    outline-offset: 2px;
+  }
+
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    outline-offset: 0;
+  }
+
+  button,
+  [role="button"],
+  a {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Headings set in the body face still get tighter tracking. */
+  h1, h2, h3 {
+    letter-spacing: -0.012em;
+    text-wrap: balance;
   }
 }
 
-/* Custom minimal scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: #FED7AA;
-  border-radius: 9999px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #FDBA74;
+/* --------------------------------------------------------------------------
+   Components. In a layer, so utility classes on the same element still win.
+   -------------------------------------------------------------------------- */
+@layer components {
+  .cc-btn-brand {
+    background-color: var(--cc-brand);
+    color: var(--cc-on-brand);
+    transition: background-color 0.15s ease, transform 0.15s var(--ease-out-expo), box-shadow 0.15s ease;
+  }
+  .cc-btn-brand:hover:not(:disabled) {
+    background-color: var(--cc-brand-hover);
+  }
+
+  .cc-btn-ink {
+    background-color: var(--color-ink-900);
+    color: var(--color-ink-50);
+    transition: background-color 0.15s ease, transform 0.15s var(--ease-out-expo);
+  }
+  .cc-btn-ink:hover:not(:disabled) {
+    background-color: var(--color-ink-700);
+  }
+
+  .cc-press:active:not(:disabled) {
+    transform: scale(0.96);
+  }
+
+  /* Cards lift toward the pointer; the photo eases in a touch. */
+  .cc-card {
+    transition: transform 0.25s var(--ease-out-expo), box-shadow 0.25s ease, border-color 0.2s ease;
+    box-shadow: 0 1px 2px hsl(var(--cc-shadow-color) / 0.04);
+  }
+  .cc-card:hover {
+    transform: translateY(-3px);
+    border-color: var(--color-ink-300);
+    box-shadow: 0 2px 4px hsl(var(--cc-shadow-color) / 0.04), 0 14px 28px -10px hsl(var(--cc-shadow-color) / 0.18);
+  }
+  .cc-card:active {
+    transform: translateY(-1px);
+  }
+  .cc-card-img {
+    transition: transform 0.6s var(--ease-out-expo);
+  }
+  .cc-card:hover .cc-card-img,
+  .group:hover .cc-card-img {
+    transform: scale(1.05);
+  }
+
+  .cc-meter {
+    transition: width 0.6s var(--ease-out-expo);
+  }
+
+  .cc-search {
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .cc-search:focus-within {
+    border-color: var(--color-brand-500);
+    box-shadow: 0 0 0 4px color-mix(in oklab, var(--color-brand-500) 18%, transparent);
+  }
+
+  .cc-skip-link {
+    position: absolute;
+    left: 1rem;
+    top: -4rem;
+    z-index: 100;
+    padding: 0.6rem 1rem;
+    border-radius: 0.75rem;
+    background: var(--color-ink-900);
+    color: var(--color-ink-50);
+    font-weight: 600;
+    font-size: 0.875rem;
+    transition: top 0.15s ease;
+  }
+  .cc-skip-link:focus {
+    top: 1rem;
+  }
+
+  /* Live indicator */
+  .cc-live-dot {
+    position: relative;
+    width: 0.4rem;
+    height: 0.4rem;
+    border-radius: 999px;
+    background: currentColor;
+    flex-shrink: 0;
+  }
+  .cc-live-dot::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: currentColor;
+    animation: cc-ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+  }
+
+  /* Hero */
+  .cc-hero {
+    background: var(--cc-surface);
+  }
+  .cc-hero-glow {
+    position: absolute;
+    inset: -30% -10% auto auto;
+    width: 60rem;
+    height: 40rem;
+    pointer-events: none;
+    background:
+      radial-gradient(closest-side, color-mix(in oklab, var(--color-brand-400) 22%, transparent), transparent 70%),
+      radial-gradient(closest-side at 30% 70%, color-mix(in oklab, #f5a524 20%, transparent), transparent 65%);
+    filter: blur(20px);
+    opacity: 0.9;
+    animation: cc-drift 22s ease-in-out infinite alternate;
+  }
+
+  .cc-now-panel {
+    background:
+      radial-gradient(120% 90% at 100% 0%, #2f56e8 0%, transparent 55%),
+      linear-gradient(160deg, #1a2a86 0%, #10163f 70%);
+    box-shadow: 0 30px 60px -30px rgb(19 29 77 / 0.55), inset 0 1px 0 rgb(255 255 255 / 0.12);
+  }
+  .cc-hour-bar {
+    transform-origin: bottom;
+    animation: cc-grow 0.7s var(--ease-out-expo) both;
+  }
+  .cc-now-marker {
+    box-shadow: 0 0 0 3px rgb(255 255 255 / 0.18);
+    transition: left 1s linear;
+  }
+
+  .cc-navbar {
+    background: color-mix(in oklab, var(--cc-surface) 82%, transparent);
+  }
+
+  /* Toast */
+  .cc-toast {
+    background: #10132b;
+    color: #f6f7fb;
+    border: 1px solid rgb(255 255 255 / 0.1);
+    animation: cc-toast-in 0.4s var(--ease-spring) both;
+  }
+  .cc-toast.is-leaving {
+    animation: cc-toast-out 0.22s ease-in both;
+  }
+
+  /* Scroll reveal: visible unless JavaScript has opted the element in. */
+  .cc-reveal.is-hidden {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  .cc-reveal.is-shown {
+    animation: cc-rise 0.7s var(--ease-out-expo) both;
+  }
+
+  .cc-loader-mark {
+    animation: cc-breathe 1.6s ease-in-out infinite;
+  }
+
+  .cc-auth-card {
+    animation: cc-rise 0.6s var(--ease-out-expo) both;
+  }
 }
 
-.dark ::-webkit-scrollbar-thumb {
-  background: #334155;
+/* --------------------------------------------------------------------------
+   Dialogs. Unlayered on purpose: these must win over per-dialog utilities.
+   -------------------------------------------------------------------------- */
+.cc-overlay {
+  background-color: rgb(9 11 28 / 0.55);
+  animation: cc-fade 0.2s ease-out both;
 }
-.dark ::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+.cc-dialog {
+  animation: cc-dialog-in 0.32s var(--ease-out-expo) both;
+}
+.cc-dialog-side {
+  animation-name: cc-slide-in-right;
+}
+html.cc-modal-open {
+  overflow: hidden;
+  scrollbar-gutter: stable;
 }
 
-.no-scrollbar::-webkit-scrollbar {
-  display: none;
-}
-.no-scrollbar {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
+/* Page change: the incoming tab settles into place. */
+.cc-page {
+  animation: cc-page-in 0.35s var(--ease-out-expo) both;
 }
 
+/* Lists that arrive after an action (tab switch, search) cascade in. */
+.cc-stagger > * {
+  animation: cc-rise 0.5s var(--ease-out-expo) both;
+}
+.cc-stagger > *:nth-child(1) { animation-delay: 0ms; }
+.cc-stagger > *:nth-child(2) { animation-delay: 40ms; }
+.cc-stagger > *:nth-child(3) { animation-delay: 80ms; }
+.cc-stagger > *:nth-child(4) { animation-delay: 120ms; }
+.cc-stagger > *:nth-child(5) { animation-delay: 160ms; }
+.cc-stagger > *:nth-child(6) { animation-delay: 200ms; }
+.cc-stagger > *:nth-child(7) { animation-delay: 240ms; }
+.cc-stagger > *:nth-child(8) { animation-delay: 280ms; }
+.cc-stagger > *:nth-child(n + 9) { animation-delay: 320ms; }
+
+/* The one orchestrated moment: the home hero assembles on first paint. */
+.cc-hero-copy > * {
+  animation: cc-rise 0.8s var(--ease-out-expo) both;
+}
+.cc-hero-copy > *:nth-child(1) { animation-delay: 60ms; }
+.cc-hero-copy > *:nth-child(2) { animation-delay: 130ms; }
+.cc-hero-copy > *:nth-child(3) { animation-delay: 210ms; }
+.cc-hero-copy > *:nth-child(4) { animation-delay: 290ms; }
+.cc-hero-copy > *:nth-child(5) { animation-delay: 360ms; }
+.cc-hero-copy > *:nth-child(6) { animation-delay: 420ms; }
+.cc-hero-panel {
+  animation: cc-panel-in 0.9s var(--ease-out-expo) 0.25s both;
+}
+.cc-results {
+  animation: cc-rise 0.5s var(--ease-out-expo) both;
+}
+.cc-ticker-item {
+  animation: cc-ticker-in 0.45s var(--ease-out-expo) both;
+}
+
+/* Legacy enter utilities used across the dialogs (animate-in, fade-in, slide-in-from-top-2). */
+.animate-in {
+  animation: cc-enter 0.2s ease-out both;
+}
+.fade-in { --cc-enter-opacity: 0; }
+.slide-in-from-top-2 { --cc-enter-y: -0.5rem; }
+
+@keyframes cc-enter {
+  from { opacity: var(--cc-enter-opacity, 1); transform: translateY(var(--cc-enter-y, 0)); }
+}
+@keyframes cc-fade {
+  from { opacity: 0; }
+}
+@keyframes cc-rise {
+  from { opacity: 0; transform: translateY(14px); }
+}
+@keyframes cc-page-in {
+  from { opacity: 0; transform: translateY(8px); }
+}
+@keyframes cc-dialog-in {
+  from { opacity: 0; transform: translateY(16px) scale(0.97); }
+}
+@keyframes cc-slide-in-right {
+  from { opacity: 0; transform: translateX(24px); }
+}
+@keyframes cc-panel-in {
+  from { opacity: 0; transform: translateY(24px) scale(0.97); }
+}
+@keyframes cc-ticker-in {
+  from { opacity: 0; transform: translateY(6px); }
+}
+@keyframes cc-toast-in {
+  from { opacity: 0; transform: translateY(16px) scale(0.95); }
+}
+@keyframes cc-toast-out {
+  to { opacity: 0; transform: translateY(8px); }
+}
+@keyframes cc-grow {
+  from { transform: scaleY(0); }
+}
+@keyframes cc-ping {
+  75%, 100% { transform: scale(2.6); opacity: 0; }
+}
+@keyframes cc-breathe {
+  50% { transform: scale(0.92); opacity: 0.75; }
+}
+@keyframes cc-drift {
+  to { transform: translate(-4rem, 3rem) rotate(8deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .cc-card:hover { transform: none; }
+  .cc-reveal.is-hidden { opacity: 1; transform: none; }
+}
+
+/* --------------------------------------------------------------------------
+   Dark theme surfaces
+   -------------------------------------------------------------------------- */
+body.dark :is(.bg-white, .hover\:bg-white:hover, .focus\:bg-white:focus):not(.cc-static, .cc-static *) {
+  background-color: var(--cc-surface);
+}
+body.dark [class*="bg-white/"]:not(.cc-static, .cc-static *) {
+  background-color: color-mix(in oklab, var(--cc-surface) 88%, transparent);
+}
+body.dark .cc-hero-glow {
+  opacity: 0.55;
+}
+body.dark .cc-card:hover {
+  border-color: var(--color-ink-400);
+}
+body.dark img:not(.cc-static img) {
+  filter: brightness(0.92);
+}
+
+/* Scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-ink-300) transparent;
+}
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-ink-300); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-ink-400); }
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }

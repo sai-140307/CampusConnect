@@ -64,8 +64,8 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: 'events', label: 'Events', icon: CalendarIcon },
     { id: 'clubs', label: 'Clubs', icon: Users },
     { id: 'resources', label: 'Resources', icon: Building2 },
-    { id: 'map', label: 'Campus Map', icon: MapPin },
-    { id: 'calendar', label: 'My Schedule', icon: CalendarIcon },
+    { id: 'map', label: 'Map', icon: MapPin },
+    { id: 'calendar', label: 'Schedule', icon: CalendarIcon },
   ];
 
   const handleNavClick = (id: 'explore' | 'events' | 'clubs' | 'resources' | 'map' | 'calendar') => {
@@ -82,7 +82,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-40 bg-[#FFF9F2]/95 dark:bg-[#0B0F19]/95 backdrop-blur-md border-b border-orange-200/80 dark:border-slate-800 text-stone-900 dark:text-slate-100 transition-colors duration-200 shadow-xs">
+    <header className="sticky top-0 z-40 cc-navbar backdrop-blur-md border-b border-ink-200 text-ink-900">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           
@@ -93,22 +93,21 @@ export const Navbar: React.FC<NavbarProps> = ({
               onClick={() => handleNavClick('explore')}
               className="flex items-center gap-2.5 text-left group select-none cursor-pointer"
             >
-              <div className="relative w-9 h-9 rounded-xl bg-orange-600 text-white flex items-center justify-center shadow-xs group-hover:bg-orange-700 transition-all border border-orange-500/40">
+              <div className="cc-btn-brand relative w-9 h-9 rounded-xl flex items-center justify-center shadow-xs group-hover:bg-brand-700 transition-all border border-brand-500/40">
                 <Network className="w-5 h-5 text-white transition-transform group-hover:scale-105" />
-                <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 rounded-full ring-2 ring-white dark:ring-slate-900" />
-              </div>
+                              </div>
               <div className="leading-tight flex flex-col justify-center">
-                <span className="font-extrabold text-sm sm:text-base tracking-tight text-stone-900 dark:text-white block">
+                <span className="font-display font-semibold text-lg tracking-tight text-ink-900 block whitespace-nowrap">
                   CampusConnect
                 </span>
-                <span className="text-[10px] sm:text-[11px] text-orange-800/80 dark:text-orange-400/90 font-medium tracking-tight block">
-                  Vellore Institute of Technology
+                <span className="text-xs text-ink-500 font-medium block whitespace-nowrap">
+                  {isOrganizer ? 'Organizer account' : 'VIT Vellore'}
                 </span>
               </div>
             </button>
 
             {/* Desktop Navigation Links */}
-            <nav className="hidden md:flex items-center gap-1">
+            <nav aria-label="Primary" className="hidden md:flex items-center gap-0.5">
               {navItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = activeTab === item.id;
@@ -117,16 +116,17 @@ export const Navbar: React.FC<NavbarProps> = ({
                     key={item.id}
                     id={`nav-link-${item.id}`}
                     onClick={() => handleNavClick(item.id)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    aria-current={isActive ? 'page' : undefined}
+                    className={`px-3 py-2 rounded-xl text-sm font-medium transition-colors flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
                       isActive
-                        ? 'bg-orange-100 dark:bg-orange-950/60 text-orange-950 dark:text-orange-200 font-bold border border-orange-200/80 dark:border-orange-800/60 shadow-2xs'
-                        : 'text-stone-600 dark:text-slate-400 hover:text-stone-900 dark:hover:text-white hover:bg-orange-50/60 dark:hover:bg-slate-800/70'
+                        ? 'bg-brand-50 text-brand-800 font-semibold'
+                        : 'text-ink-600 hover:text-ink-900 hover:bg-ink-100'
                     }`}
                   >
-                    <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-orange-600 dark:text-orange-400' : 'text-stone-400 dark:text-slate-500'}`} />
+                    <Icon className={`w-4 h-4 hidden lg:block ${isActive ? 'text-brand-600' : 'text-ink-400'}`} />
                     <span>{item.label}</span>
                     {item.id === 'calendar' && (userProfile?.rsvpdEvents || []).length > 0 && (
-                      <span className="ml-0.5 px-1.5 py-0.2 rounded-full bg-orange-600 text-white text-[10px] font-bold">
+                      <span className="cc-btn-brand ml-0.5 px-1.5 py-0.5 rounded-full text-2xs font-bold">
                         {(userProfile?.rsvpdEvents || []).length}
                       </span>
                     )}
@@ -143,65 +143,25 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               id="btn-theme-toggle"
               onClick={onToggleTheme}
-              className="p-2 rounded-lg text-stone-600 dark:text-slate-300 hover:text-stone-900 dark:hover:text-white hover:bg-orange-100/70 dark:hover:bg-slate-800 transition-all cursor-pointer relative"
-              title={theme === 'dark' ? "Switch to Warm Light Mode" : "Switch to High-Contrast Dark Mode"}
-              aria-label="Toggle Theme Mode"
+              className="p-2 rounded-lg text-ink-600 hover:text-ink-900 hover:bg-ink-100 transition-colors cursor-pointer relative"
+              title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
             >
               {theme === 'dark' ? (
-                <Sun className="w-4 h-4 text-amber-400" />
+                <Sun className="w-[18px] h-[18px]" />
               ) : (
-                <Moon className="w-4 h-4 text-stone-700 dark:text-slate-300" />
+                <Moon className="w-[18px] h-[18px]" />
               )}
             </button>
 
-            {/* User Role Badge */}
-            <div 
-              id="user-role-badge"
-              className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold border ${
-                isOrganizer
-                  ? 'bg-amber-100/90 dark:bg-amber-950/60 text-amber-950 dark:text-amber-200 border-amber-300 dark:border-amber-700/80'
-                  : 'bg-orange-100/70 dark:bg-slate-800 text-orange-900 dark:text-orange-300 border-orange-200 dark:border-slate-700'
-              }`}
-              title={isOrganizer ? "Logged in with Event Organizer privileges" : "Student account"}
-            >
-              {isOrganizer ? (
-                <>
-                  <Briefcase className="w-3.5 h-3.5 text-amber-700 dark:text-amber-400" />
-                  <span>Organizer</span>
-                </>
-              ) : (
-                <>
-                  <GraduationCap className="w-3.5 h-3.5 text-orange-700 dark:text-orange-400" />
-                  <span>Student</span>
-                </>
-              )}
-            </div>
-
-            {/* Create / Host Event Button */}
-            <button
-              id="btn-post-event-nav"
-              onClick={handlePostEventClick}
-              className={`hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer ${
-                isOrganizer 
-                  ? 'bg-orange-600 hover:bg-orange-700 text-white shadow-xs' 
-                  : 'bg-stone-100 dark:bg-slate-800 text-stone-600 dark:text-slate-400 hover:bg-stone-200 dark:hover:bg-slate-700 border border-stone-200 dark:border-slate-700'
-              }`}
-              title={isOrganizer ? "Post a new event to campus" : "Requires Event Organizer permissions"}
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>{isOrganizer ? "Post Event" : "Post Event 🔒"}</span>
-            </button>
-
-            {/* Video Tour Showcase Button */}
-            {onOpenVideoShowcase && (
+            {isOrganizer && (
               <button
-                id="btn-video-tour-nav"
-                onClick={onOpenVideoShowcase}
-                className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-orange-100/80 dark:bg-slate-800 hover:bg-orange-200/80 dark:hover:bg-slate-700 text-orange-950 dark:text-orange-300 border border-orange-300/70 dark:border-slate-700 transition-colors shadow-2xs cursor-pointer"
-                title="Watch Campus Video & Infrastructure Tour"
+                id="btn-post-event-nav"
+                onClick={handlePostEventClick}
+                className="cc-btn-brand cc-press hidden sm:inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-semibold cursor-pointer whitespace-nowrap"
               >
-                <span className="w-2 h-2 rounded-full bg-orange-600 dark:bg-orange-400 animate-pulse"></span>
-                <span>Video Tour</span>
+                <Plus className="w-4 h-4" />
+                <span>Post event</span>
               </button>
             )}
 
@@ -209,37 +169,37 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               id="btn-email-notifications-toggle"
               onClick={onOpenEmailModal}
-              className="relative p-2 rounded-lg text-stone-600 dark:text-slate-300 hover:text-stone-900 dark:hover:text-white hover:bg-orange-100/70 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-              title="Email Notifications & Sent Tickets"
-              aria-label="Email Notifications"
+              className="relative hidden sm:block p-2 rounded-lg text-ink-600 hover:text-ink-900 hover:bg-ink-100 transition-colors cursor-pointer"
+              title="Email center"
+              aria-label="Email center"
             >
-              <Mail className="w-4 h-4" />
+              <Mail className="w-[18px] h-[18px]" />
             </button>
 
             {/* Notifications Toggle */}
             <button
               id="btn-notifications-toggle"
               onClick={onOpenNotifications}
-              className="relative p-2 rounded-lg text-stone-600 dark:text-slate-300 hover:text-stone-900 dark:hover:text-white hover:bg-orange-100/70 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-              aria-label="Notifications"
+              className="relative p-2 rounded-lg text-ink-600 hover:text-ink-900 hover:bg-ink-100 transition-colors cursor-pointer"
+              aria-label={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : 'Notifications'}
             >
-              <Bell className="w-4 h-4" />
+              <Bell className="w-[18px] h-[18px]" />
               {unreadCount > 0 && (
-                <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-orange-600 rounded-full" />
+                <span className="absolute top-1 right-1 min-w-4 h-4 px-1 rounded-full bg-rose-600 text-white text-2xs font-semibold flex items-center justify-center tabular-nums">{unreadCount > 9 ? '9+' : unreadCount}</span>
               )}
             </button>
 
             {/* Authenticated User Status & Logout Button */}
             {firebaseUser && (
-              <div className="flex items-center gap-2">
+              <div className="hidden sm:flex items-center gap-2">
                 <button
                   id="btn-logout"
                   onClick={onLogout}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/60 hover:text-rose-800 dark:hover:text-rose-200 border border-rose-200/80 dark:border-rose-800/60 transition-colors shadow-2xs cursor-pointer"
-                  title="Sign out from Firebase and return to login"
+                  className="hidden sm:block p-2 rounded-lg text-ink-600 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                  aria-label="Sign out"
+                  title="Sign out"
                 >
-                  <LogOut className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />
-                  <span className="hidden lg:inline">Logout</span>
+                  <LogOut className="w-[18px] h-[18px]" />
                 </button>
               </div>
             )}
@@ -248,17 +208,19 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               id="btn-user-profile"
               onClick={onOpenProfile}
-              className="flex items-center gap-1.5 p-2 rounded-lg text-stone-600 dark:text-slate-300 hover:text-stone-900 dark:hover:text-white hover:bg-orange-100/70 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-              title="Student Settings & Preferences"
+              className="flex items-center gap-1.5 p-2 rounded-lg text-ink-600 hover:text-ink-900 hover:bg-ink-100 transition-colors cursor-pointer"
+              aria-label="Your profile"
+              title="Your profile"
             >
-              <User className="w-4 h-4" />
+              <User className="w-[18px] h-[18px]" />
             </button>
 
             {/* Mobile Menu Button */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="p-2 rounded-lg text-stone-600 dark:text-slate-300 hover:text-stone-900 dark:hover:text-white md:hidden cursor-pointer"
-              aria-label="Toggle Menu"
+              className="p-2 rounded-lg text-ink-600 hover:text-ink-900 md:hidden cursor-pointer"
+              aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
+              aria-expanded={mobileMenuOpen}
             >
               {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
             </button>
@@ -268,7 +230,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Mobile Dropdown Navigation */}
         {mobileMenuOpen && (
-          <div className="md:hidden py-3 border-t border-orange-200/60 dark:border-slate-800 space-y-1 animate-in fade-in duration-150 bg-[#FFF9F2] dark:bg-[#0B0F19]">
+          <div className="md:hidden py-3 border-t border-brand-200/60 space-y-1 animate-in fade-in duration-150 bg-paper">
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = activeTab === item.id;
@@ -278,16 +240,16 @@ export const Navbar: React.FC<NavbarProps> = ({
                   onClick={() => handleNavClick(item.id)}
                   className={`w-full px-3 py-2 rounded-lg text-xs font-semibold flex items-center justify-between text-left cursor-pointer ${
                     isActive
-                      ? 'bg-orange-100 dark:bg-orange-950/60 text-orange-950 dark:text-orange-200 font-bold'
-                      : 'text-stone-600 dark:text-slate-400 hover:bg-orange-50 dark:hover:bg-slate-800'
+                      ? 'bg-brand-100 text-brand-950 font-bold'
+                      : 'text-ink-600 hover:bg-brand-50'
                   }`}
                 >
                   <div className="flex items-center gap-2.5">
-                    <Icon className="w-4 h-4 text-orange-600 dark:text-orange-400" />
+                    <Icon className="w-4 h-4 text-brand-600" />
                     <span>{item.label}</span>
                   </div>
                   {item.id === 'calendar' && (userProfile?.rsvpdEvents || []).length > 0 && (
-                    <span className="px-1.5 py-0.5 rounded-full bg-orange-600 text-white text-[10px] font-bold">
+                    <span className="cc-btn-brand px-1.5 py-0.5 rounded-full text-2xs font-bold">
                       {(userProfile?.rsvpdEvents || []).length}
                     </span>
                   )}
@@ -295,19 +257,19 @@ export const Navbar: React.FC<NavbarProps> = ({
               );
             })}
 
-            <div className="pt-2 border-t border-orange-200/60 dark:border-slate-800 space-y-2">
+            <div className="pt-2 border-t border-brand-200/60 space-y-2">
               {/* Mobile Theme Toggle */}
               <button
                 id="btn-theme-toggle-mobile"
                 onClick={onToggleTheme}
-                className="w-full px-3 py-2 rounded-lg text-xs font-bold bg-orange-100/70 dark:bg-slate-800 text-stone-800 dark:text-slate-200 flex items-center justify-between transition-colors cursor-pointer"
+                className="w-full px-3 py-2 rounded-lg text-xs font-bold bg-brand-100/70 text-ink-800 flex items-center justify-between transition-colors cursor-pointer"
               >
                 <div className="flex items-center gap-2">
-                  {theme === 'dark' ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-stone-700" />}
-                  <span>{theme === 'dark' ? 'Theme: Dark Mode' : 'Theme: Light Mode'}</span>
+                  {theme === 'dark' ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-ink-700" />}
+                  <span>{theme === 'dark' ? 'Dark mode' : 'Light mode'}</span>
                 </div>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-orange-200/70 dark:bg-slate-700 text-orange-950 dark:text-slate-200 font-bold">
-                  {theme === 'dark' ? 'Switch to Light ☀️' : 'Switch to Dark 🌙'}
+                <span className="text-2xs px-2 py-0.5 rounded-full bg-brand-200/70 text-brand-950 font-bold">
+                  {theme === 'dark' ? 'Switch to light' : 'Switch to dark'}
                 </span>
               </button>
 
@@ -316,10 +278,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                   onOpenEmailModal();
                   setMobileMenuOpen(false);
                 }}
-                className="w-full px-3 py-2 rounded-lg text-xs font-bold bg-orange-100 dark:bg-slate-800 text-orange-900 dark:text-orange-300 flex items-center justify-center gap-1.5"
+                className="w-full px-3 py-2 rounded-lg text-xs font-bold bg-brand-100 text-brand-900 flex items-center justify-center gap-1.5"
               >
-                <Mail className="w-4 h-4 text-orange-700 dark:text-orange-400" />
-                <span>Email Notifications & Sent Tickets</span>
+                <Mail className="w-4 h-4 text-brand-700" />
+                <span>Email center</span>
               </button>
 
               <button
@@ -328,15 +290,15 @@ export const Navbar: React.FC<NavbarProps> = ({
                   setMobileMenuOpen(false);
                 }}
                 className={`w-full px-3 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 ${
-                  isOrganizer ? 'bg-orange-600 text-white' : 'bg-stone-200 dark:bg-slate-800 text-stone-700 dark:text-slate-300'
+                  isOrganizer ? 'cc-btn-brand' : 'bg-ink-200 text-ink-700'
                 }`}
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>{isOrganizer ? "Post Campus Event" : "Post Event (Organizer Only 🔒)"}</span>
+                <span>{isOrganizer ? "Post event" : "Post event (organizers only)"}</span>
               </button>
 
               {firebaseUser && (
-                <div className="px-3 py-2 rounded-lg bg-orange-50 dark:bg-slate-800/80 text-[11px] text-stone-700 dark:text-slate-300 flex items-center justify-between">
+                <div className="px-3 py-2 rounded-lg bg-brand-50 text-xs text-ink-700 flex items-center justify-between">
                   <span className="truncate">{firebaseUser.email}</span>
                   <button
                     id="btn-mobile-logout"
@@ -344,7 +306,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                       setMobileMenuOpen(false);
                       onLogout();
                     }}
-                    className="text-xs font-bold text-rose-600 dark:text-rose-400 hover:text-rose-700 flex items-center gap-1 cursor-pointer"
+                    className="text-xs font-bold text-rose-600 hover:text-rose-700 flex items-center gap-1 cursor-pointer"
                   >
                     <LogOut className="w-3 h-3" />
                     <span>Logout</span>

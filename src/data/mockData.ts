@@ -1,21 +1,22 @@
 import { CampusEvent, CampusClub, CampusResource, NotificationItem, ChatMessage, UserProfile } from '../types';
 import { MOCK_CAMPUS_EVENTS } from './mockEvents';
+import { compareEventsByStart, formatEventWhen, getEventPhase, isEventEnded, now } from '../utils/campusTime';
 
 export const INITIAL_USER: UserProfile = {
-  name: 'Alex Rivera',
-  major: 'Computer Science & Cognitive Science',
+  name: 'Student',
+  major: 'Computer Science & Engineering',
   year: 'Junior',
   role: 'student',
   interests: ['Artificial Intelligence', 'Free Food 🍕', 'Hackathons', 'Game Development', 'Outdoor Trips', 'Career Prep'],
   preferredPerks: ['Free Food 🍕', 'Free Swag 👕', 'Resume Drop 💼', 'Free Coffee ☕'],
   campusZone: 'Central Hub',
-  rsvpdEvents: ['ev-1', 'ev-4'],
-  savedEvents: ['ev-2', 'ev-7'],
-  joinedClubs: ['club-1', 'club-3'],
-  savedResources: ['res-1', 'res-4'],
+  rsvpdEvents: [],
+  savedEvents: [],
+  joinedClubs: [],
+  savedResources: [],
   emailSettings: {
     enabled: true,
-    recipientEmail: 'alex.rivera@vitstudent.ac.in',
+    recipientEmail: '',
     notifyOnRsvp: true,
     notifyOnMissedEvent: true,
     notify24hBefore: true,
@@ -303,55 +304,63 @@ export const MOCK_RESOURCES: CampusResource[] = [
   },
 ];
 
-export const INITIAL_NOTIFICATIONS: NotificationItem[] = [
-  {
-    id: 'notif-1',
-    title: '🔥 Hot Free Food Drop at Student Union!',
-    body: '12 boxes of warm artisan wood-fired pizza just arrived in Garden Terrace Room 204 for the Puppy Therapy event. Free for all students!',
-    timestamp: '5m ago',
-    createdAt: Date.now() - 5 * 60 * 1000,
-    type: 'food_drop',
-    eventId: 'ev-2',
-    isRead: false,
-    urgent: true,
-  },
-  {
-    id: 'notif-2',
-    title: 'Reminder: Riviera 2026 Starts Today',
-    body: 'Inauguration Gala kicks off at 5:30 PM in Student Union Outdoor Amphitheater. Drone choreography starts at 8:00 PM!',
-    timestamp: '25m ago',
-    createdAt: Date.now() - 25 * 60 * 1000,
-    type: 'reminder',
-    eventId: 'ev-1',
-    isRead: false,
-    urgent: true,
-  },
-  {
-    id: 'notif-3',
-    title: 'New AI Match Alert: CS Tutoring & Pancakes',
-    body: 'Based on your interest in "Algorithms & Free Food", we found a 98% match event tonight at 8:00 PM in Sterling Library.',
+/**
+ * Starter notifications, written from the real schedule so that every time
+ * and place they mention is true at the moment the app is opened.
+ */
+export function buildInitialNotifications(events: CampusEvent[], at: number = now()): NotificationItem[] {
+  const open = events.filter((e) => !isEventEnded(e, at)).sort(compareEventsByStart);
+  const items: NotificationItem[] = [];
+
+  const food = open.find((e) => e.foodDetails);
+  if (food) {
+    items.push({
+      id: `welcome-food-${food.id}`,
+      title: `Free food at ${food.building}`,
+      body: `${food.title}: ${food.foodDetails} ${formatEventWhen(food, at)}, ${food.room}.`,
+      timestamp: '5m ago',
+      createdAt: at - 5 * 60_000,
+      type: 'food_drop',
+      eventId: food.id,
+      isRead: false,
+      urgent: true,
+    });
+  }
+
+  const next = open.find((e) => e.isHot && e.id !== food?.id && getEventPhase(e, at) === 'upcoming');
+  if (next) {
+    items.push({
+      id: `welcome-next-${next.id}`,
+      title: `Coming up: ${next.title}`,
+      body: `${formatEventWhen(next, at)} at ${next.building}, ${next.room}. Hosted by ${next.organizer}.`,
+      timestamp: '25m ago',
+      createdAt: at - 25 * 60_000,
+      type: 'reminder',
+      eventId: next.id,
+      isRead: false,
+    });
+  }
+
+  items.push({
+    id: 'welcome-tips',
+    title: 'Welcome to CampusConnect',
+    body: 'RSVP to an event to add it to your schedule, with a live countdown and one-tap calendar export.',
     timestamp: '2h ago',
-    createdAt: Date.now() - 2 * 60 * 60 * 1000,
+    createdAt: at - 2 * 3_600_000,
     type: 'match_alert',
-    eventId: 'ev-3',
     isRead: true,
-  },
-  {
-    id: 'notif-4',
-    title: 'Faculty Broadcast: Undergraduate Research Grants',
-    body: 'The Office of Undergraduate Research posted 14 new paid lab positions for Fall. Applications close next Friday.',
-    timestamp: '6h ago',
-    createdAt: Date.now() - 6 * 60 * 60 * 1000,
-    type: 'faculty_note',
-    eventId: 'ev-7',
-    isRead: true,
-  },
-];
+  });
+
+  return items;
+}
+
+/** @deprecated Use buildInitialNotifications(events) so the times are always correct. */
+export const INITIAL_NOTIFICATIONS: NotificationItem[] = [];
 
 export const INITIAL_CHAT_MESSAGES: ChatMessage[] = [
   {
     id: 'msg-1',
-    targetId: 'ev-1',
+    targetId: 'ev-10',
     targetType: 'event',
     senderName: 'Elena Rostova',
     senderAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
@@ -361,11 +370,11 @@ export const INITIAL_CHAT_MESSAGES: ChatMessage[] = [
     createdAt: Date.now() - 10 * 60 * 1000,
     likes: 14,
     isPinned: true,
-    tag: 'food_update',
+    tag: 'general',
   },
   {
     id: 'msg-2',
-    targetId: 'ev-1',
+    targetId: 'ev-10',
     targetType: 'event',
     senderName: 'Devon Wright',
     senderAvatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&auto=format&fit=crop&q=80',
@@ -378,7 +387,7 @@ export const INITIAL_CHAT_MESSAGES: ChatMessage[] = [
   },
   {
     id: 'msg-3',
-    targetId: 'ev-1',
+    targetId: 'ev-10',
     targetType: 'event',
     senderName: 'Maya Patel',
     senderAvatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&auto=format&fit=crop&q=80',
@@ -391,7 +400,7 @@ export const INITIAL_CHAT_MESSAGES: ChatMessage[] = [
   },
   {
     id: 'msg-4',
-    targetId: 'ev-2',
+    targetId: 'ev-31',
     targetType: 'event',
     senderName: 'Officer Sarah (Wellness)',
     senderAvatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=100&auto=format&fit=crop&q=80',
@@ -410,7 +419,7 @@ export const INITIAL_CHAT_MESSAGES: ChatMessage[] = [
     senderName: 'Marcus Cole',
     senderAvatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&auto=format&fit=crop&q=80',
     senderRole: 'student',
-    text: 'Does anyone have the slides from yesterday’s Gemini 3.7 vision codelab? Missed the last 15 mins!',
+    text: 'Does anyone have the slides from yesterday’s vision codelab? Missed the last 15 mins!',
     timestamp: '1h ago',
     createdAt: Date.now() - 60 * 60 * 1000,
     likes: 3,

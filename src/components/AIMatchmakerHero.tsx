@@ -1,23 +1,16 @@
-import React, { useState } from 'react';
-import { 
-  Search, 
-  ArrowRight, 
-  MapPin, 
-  Calendar, 
-  Loader2, 
-  X,
-  Sparkles,
-  Users,
-  Building2,
-  Check,
-  Play,
-  Video,
-  Film
-} from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Search, ArrowRight, Calendar, Loader2, X, Users, Building2, Play, CheckCircle2 } from 'lucide-react';
 import { QUICK_PROMPTS } from '../data/mockData';
 import { AIMatchResult, CampusEvent, CampusClub, CampusResource } from '../types';
+import { formatEventWhen } from '../utils/campusTime';
+import { useNow } from '../hooks/useNow';
+import { CampusNowPanel } from './CampusNowPanel';
 
 interface AIMatchmakerHeroProps {
+  /** Events that have not ended, sorted by start time. */
+  events: CampusEvent[];
+  todayEvents?: CampusEvent[];
+  userName?: string;
   onSearchAI: (query: string) => void;
   isLoading: boolean;
   matchResult: AIMatchResult | null;
@@ -27,11 +20,14 @@ interface AIMatchmakerHeroProps {
   onSelectResource: (resource: CampusResource) => void;
   onRsvpEvent: (eventId: string) => void;
   rsvpdEvents: string[];
-  onNavigateTab?: (tab: string) => void;
+  onViewAllEvents: () => void;
   onOpenVideoShowcase?: () => void;
 }
 
 export const AIMatchmakerHero: React.FC<AIMatchmakerHeroProps> = ({
+  events,
+  todayEvents,
+  userName,
   onSearchAI,
   isLoading,
   matchResult,
@@ -41,262 +37,261 @@ export const AIMatchmakerHero: React.FC<AIMatchmakerHeroProps> = ({
   onSelectResource,
   onRsvpEvent,
   rsvpdEvents,
-  onNavigateTab,
+  onViewAllEvents,
   onOpenVideoShowcase,
 }) => {
+  const now = useNow();
   const [query, setQuery] = useState('');
+  const resultsRef = useRef<HTMLDivElement>(null);
+
+  // Bring new results into view; they sit below the fold on most screens.
+  useEffect(() => {
+    if (!matchResult || !resultsRef.current) return;
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    resultsRef.current.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+  }, [matchResult]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (query.trim()) {
-      onSearchAI(query.trim());
-    }
+    if (query.trim() && !isLoading) onSearchAI(query.trim());
   };
 
   const handlePromptClick = (text: string) => {
+    if (isLoading) return;
     setQuery(text);
     onSearchAI(text);
   };
 
+  const firstName = (userName || '').trim().split(/\s+/)[0];
+  const noMatches =
+    matchResult &&
+    matchResult.matchedEvents.length + matchResult.matchedClubs.length + matchResult.matchedResources.length === 0;
+
   return (
-    <section className="bg-white border-b border-slate-200/80 py-12 px-4 sm:px-6 lg:px-8 relative overflow-hidden">
-      {/* Decorative ambient background accents */}
-      <div className="absolute top-0 right-1/4 w-96 h-96 bg-orange-100/40 rounded-full blur-3xl pointer-events-none -z-10" />
-      <div className="absolute bottom-0 left-1/4 w-96 h-96 bg-amber-100/30 rounded-full blur-3xl pointer-events-none -z-10" />
+    <section className="cc-hero relative overflow-hidden border-b border-ink-200">
+      <div className="cc-hero-glow" aria-hidden="true" />
 
-      <div className="max-w-4xl mx-auto">
-        
-        {/* Header Title */}
-        <div className="text-center max-w-2xl mx-auto mb-8">
-          <div className="flex flex-wrap items-center justify-center gap-2 mb-3">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-100 border border-slate-200/80 text-slate-700 text-xs font-medium shadow-2xs">
-              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-              <span>Vellore Institute of Technology</span>
-              <span className="text-slate-300">•</span>
-              <span className="font-semibold text-slate-900">CampusConnect</span>
-            </div>
+      <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-14">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
+          <div className="lg:col-span-7 min-w-0 cc-hero-copy">
+            <p className="text-sm font-medium text-brand-700">
+              {firstName && firstName !== 'Student' ? `Hi ${firstName}, welcome back.` : 'Vellore Institute of Technology'}
+            </p>
+            <h1 className="font-display mt-3 text-[2.1rem] sm:text-5xl lg:text-6xl font-semibold tracking-tight text-ink-950 leading-[1.05]">
+              Everything on campus, timed to the minute.
+            </h1>
+            <p className="mt-4 text-base text-ink-600 leading-relaxed max-w-xl">
+              Events, clubs and student services in one place. Say what you are in the mood for and get matches from
+              what is on today.
+            </p>
 
-            {onOpenVideoShowcase && (
+            <form onSubmit={handleSubmit} className="mt-7 max-w-xl" role="search">
+              <label htmlFor="ai-query-input" className="sr-only">
+                Describe what you are looking for
+              </label>
+              <div className="cc-search relative flex items-center bg-white border border-ink-300 rounded-2xl p-1.5 shadow-sm">
+                <Search className="w-5 h-5 text-ink-400 ml-3 mr-2 shrink-0" />
+                <input
+                  id="ai-query-input"
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Free food and new people tonight"
+                  autoComplete="off"
+                  className="w-full min-w-0 bg-transparent text-ink-900 placeholder-ink-400 text-base focus:outline-none px-1 py-2"
+                />
+                {query && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQuery('');
+                      onClearMatchResult();
+                    }}
+                    className="p-2 text-ink-400 hover:text-ink-700 rounded-lg mr-1 transition-colors cursor-pointer"
+                    aria-label="Clear search"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+                <button
+                  id="btn-submit-ai-search"
+                  type="submit"
+                  disabled={isLoading || !query.trim()}
+                  className="cc-btn-brand cc-press px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 shrink-0 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span className="hidden sm:inline">Matching</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="hidden sm:inline">Find matches</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+
+            {!matchResult && (
+              <div className="mt-4 flex items-center gap-2 flex-wrap max-w-xl">
+                {QUICK_PROMPTS.slice(0, 4).map((p) => (
+                  <button
+                    key={p.text}
+                    type="button"
+                    disabled={isLoading}
+                    onClick={() => handlePromptClick(p.text)}
+                    className="cc-chip px-3 py-1.5 rounded-full text-xs font-medium bg-white border border-ink-200 text-ink-700 hover:border-brand-400 hover:text-brand-800 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <span aria-hidden="true">{p.icon}</span>
+                    <span>{p.text}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {onOpenVideoShowcase && !matchResult && (
               <button
                 type="button"
                 onClick={onOpenVideoShowcase}
-                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-orange-50 hover:bg-orange-100 border border-orange-200/80 text-orange-900 text-xs font-bold transition-colors cursor-pointer shadow-2xs"
+                className="mt-6 inline-flex items-center gap-2 text-sm font-medium text-ink-700 hover:text-brand-700 transition-colors cursor-pointer"
               >
-                <Play className="w-3 h-3 fill-current text-orange-600" />
-                <span>Watch Campus & Project Tour</span>
+                <span className="cc-btn-ink w-8 h-8 rounded-full flex items-center justify-center">
+                  <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
+                </span>
+                Take the 2-minute campus tour
               </button>
             )}
           </div>
 
-          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-slate-900 tracking-tight">
-            Discover your campus community.
-          </h1>
-          <p className="mt-2 text-xs sm:text-sm text-slate-500 font-normal leading-relaxed">
-            Search events, student clubs, and support resources across VIT in one unified directory. Describe what you're looking for or pick a topic below.
-          </p>
+          <div className="lg:col-span-5 min-w-0 cc-hero-panel cc-static">
+            <CampusNowPanel events={events} todayEvents={todayEvents} onSelectEvent={onSelectEvent} onViewAll={onViewAllEvents} />
+          </div>
         </div>
 
-        {/* Minimal Search Bar */}
-        <form onSubmit={handleSubmit} className="max-w-2xl mx-auto mb-4">
-          <div className="relative flex items-center bg-white border border-slate-300 rounded-xl p-1 shadow-2xs focus-within:border-slate-800 focus-within:ring-2 focus-within:ring-slate-900/5 transition-all">
-            <div className="pl-3 pr-2 text-slate-400">
-              <Search className="w-4 h-4" />
-            </div>
-            <input
-              id="ai-query-input"
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="e.g. 'I want free food and to meet people' or 'CS tutoring tonight'"
-              className="w-full bg-transparent text-slate-900 placeholder-slate-400 text-xs sm:text-sm focus:outline-none px-1"
-            />
-            {query && (
+        {matchResult && (
+          <div ref={resultsRef} className="cc-results mt-10 pt-8 border-t border-ink-200 scroll-mt-24" aria-live="polite">
+            <div className="flex items-start justify-between gap-4 mb-6">
+              <div className="max-w-2xl">
+                <h2 className="font-display text-xl font-semibold text-ink-900">Matches for “{matchResult.query}”</h2>
+                <p className="text-sm text-ink-600 mt-1">{matchResult.summary}</p>
+              </div>
               <button
-                type="button"
                 onClick={() => {
                   setQuery('');
                   onClearMatchResult();
                 }}
-                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-md mr-1 transition-colors"
-                aria-label="Clear query"
+                className="text-sm font-medium text-ink-600 hover:text-ink-900 flex items-center gap-1.5 px-3 py-1.5 rounded-lg hover:bg-ink-100 transition-colors cursor-pointer shrink-0"
               >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
-            <button
-              id="btn-submit-ai-search"
-              type="submit"
-              disabled={isLoading || !query.trim()}
-              className="px-4 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400 text-white text-xs font-semibold flex items-center gap-1.5 transition-all shrink-0 cursor-pointer"
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Searching...</span>
-                </>
-              ) : (
-                <>
-                  <span>Search</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </>
-              )}
-            </button>
-          </div>
-        </form>
-
-        {/* Quick Suggestion Chips */}
-        {!matchResult && (
-          <div className="flex items-center justify-center gap-1.5 flex-wrap max-w-2xl mx-auto pt-1">
-            <span className="text-[11px] text-slate-400 mr-1 font-medium">Try:</span>
-            {QUICK_PROMPTS.slice(0, 4).map((p, idx) => (
-              <button
-                key={idx}
-                type="button"
-                onClick={() => handlePromptClick(p.text)}
-                className="px-2.5 py-1 rounded-full text-xs bg-slate-50 hover:bg-slate-100 border border-slate-200/80 text-slate-600 hover:text-slate-900 transition-colors flex items-center gap-1 cursor-pointer"
-              >
-                <span>{p.icon}</span>
-                <span className="truncate max-w-[180px] sm:max-w-none">{p.text}</span>
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Search & Recommendation Results View */}
-        {matchResult && (
-          <div className="mt-8 pt-6 border-t border-slate-100 animate-in fade-in duration-200">
-            <div className="flex items-center justify-between gap-4 mb-4 pb-2 border-b border-slate-100">
-              <div>
-                <span className="text-xs font-semibold text-slate-900">
-                  Matches for "{matchResult.query}"
-                </span>
-                <p className="text-[11px] text-slate-500">
-                  {matchResult.summary}
-                </p>
-              </div>
-              <button
-                onClick={onClearMatchResult}
-                className="text-xs font-medium text-slate-500 hover:text-slate-900 flex items-center gap-1 px-2 py-1 rounded-md hover:bg-slate-100 transition-colors cursor-pointer"
-              >
-                <X className="w-3.5 h-3.5" />
-                <span>Clear</span>
+                <X className="w-4 h-4" />
+                Clear
               </button>
             </div>
 
-            {/* Matched Events */}
-            {matchResult.matchedEvents.length > 0 && (
-              <div className="mb-6">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-slate-600" />
-                  <span>Matching Events ({matchResult.matchedEvents.length})</span>
-                </h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {matchResult.matchedEvents.map((event) => (
-                    <div
-                      key={event.id}
-                      onClick={() => onSelectEvent(event)}
-                      className="p-3.5 rounded-xl border border-slate-200 hover:border-slate-300 hover:shadow-2xs transition-all bg-white cursor-pointer group flex flex-col justify-between"
-                    >
-                      <div>
-                        <div className="flex items-start justify-between gap-2 mb-1.5">
-                          <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-slate-100 text-slate-700">
-                            {event.category}
-                          </span>
-                          <span className="text-[10px] text-slate-400">{event.displayTime}</span>
-                        </div>
-                        <h5 className="font-bold text-slate-900 text-sm group-hover:text-slate-700 transition-colors line-clamp-1">
-                          {event.title}
-                        </h5>
-                        <p className="text-xs text-slate-500 line-clamp-2 mt-1">
-                          {event.shortDesc}
-                        </p>
-                      </div>
+            {noMatches && (
+              <p className="text-sm text-ink-600">Nothing matched. Try fewer or different words, like “hackathon” or “tutoring”.</p>
+            )}
 
-                      <div className="flex items-center justify-between mt-3 pt-2 border-t border-slate-100 text-xs">
-                        <span className="text-slate-500 text-[11px] truncate max-w-[140px]">
-                          {event.building}
-                        </span>
+            {matchResult.matchedEvents.length > 0 && (
+              <div className="mb-8">
+                <h3 className="text-sm font-semibold text-ink-700 mb-3 flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-ink-400" />
+                  Events
+                </h3>
+                <div className="cc-stagger grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {matchResult.matchedEvents.map(({ event, matchScore, reason }) => {
+                    const going = rsvpdEvents.includes(event.id);
+                    return (
+                      <div
+                        key={event.id}
+                        onClick={() => onSelectEvent(event)}
+                        className="cc-card p-4 rounded-2xl border border-ink-200 bg-white cursor-pointer flex flex-col"
+                      >
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <span className="text-2xs font-semibold px-2 py-0.5 rounded-full bg-brand-50 text-brand-800 tabular-nums">
+                            {matchScore}% match
+                          </span>
+                          <span className="text-2xs text-ink-500 truncate">{event.category}</span>
+                        </div>
+                        <h4 className="font-display font-semibold text-ink-900 text-sm leading-snug line-clamp-2">{event.title}</h4>
+                        <p className="text-xs text-ink-700 mt-1.5 tabular-nums">{formatEventWhen(event, now)}</p>
+                        <p className="text-xs text-ink-500 mt-0.5 truncate">{event.building}</p>
+                        <p className="text-xs text-ink-600 mt-2 line-clamp-2 leading-relaxed">{reason}</p>
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             onRsvpEvent(event.id);
                           }}
-                          className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors cursor-pointer ${
-                            rsvpdEvents.includes(event.id)
-                              ? 'bg-slate-100 text-slate-700'
-                              : 'bg-slate-900 text-white hover:bg-slate-800'
+                          aria-pressed={going}
+                          className={`cc-press mt-3 self-start px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer ${
+                            going ? 'bg-emerald-600 text-white' : 'cc-btn-brand'
                           }`}
                         >
-                          {rsvpdEvents.includes(event.id) ? 'RSVP’d ✓' : 'RSVP'}
+                          {going && <CheckCircle2 className="w-3.5 h-3.5" />}
+                          {going ? 'Going' : 'RSVP'}
                         </button>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
 
-            {/* Matched Clubs */}
-            {matchResult.matchedClubs.length > 0 && (
-              <div className="mb-6">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
-                  <Users className="w-3.5 h-3.5 text-slate-600" />
-                  <span>Matching Student Clubs ({matchResult.matchedClubs.length})</span>
-                </h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {matchResult.matchedClubs.map((club) => (
-                    <div
-                      key={club.id}
-                      onClick={() => onSelectClub(club)}
-                      className="p-3.5 rounded-xl border border-slate-200 hover:border-slate-300 hover:shadow-2xs transition-all bg-white cursor-pointer group"
-                    >
-                      <div className="flex items-start justify-between gap-2 mb-1.5">
-                        <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-slate-100 text-slate-700">
-                          {club.category}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              {matchResult.matchedClubs.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-semibold text-ink-700 mb-3 flex items-center gap-2">
+                    <Users className="w-4 h-4 text-ink-400" />
+                    Clubs
+                  </h3>
+                  <div className="space-y-2">
+                    {matchResult.matchedClubs.map(({ club, reason }) => (
+                      <button
+                        key={club.id}
+                        type="button"
+                        onClick={() => onSelectClub(club)}
+                        className="cc-card w-full text-left p-3.5 rounded-xl border border-ink-200 bg-white cursor-pointer"
+                      >
+                        <span className="flex items-center justify-between gap-2">
+                          <span className="font-semibold text-ink-900 text-sm truncate">{club.name}</span>
+                          <span className="text-2xs text-ink-500 shrink-0 tabular-nums">
+                            {club.membersCount.toLocaleString('en-IN')} members
+                          </span>
                         </span>
-                        <span className="text-[10px] text-slate-400">{club.membersCount} members</span>
-                      </div>
-                      <h5 className="font-bold text-slate-900 text-sm group-hover:text-slate-700 transition-colors line-clamp-1">
-                        {club.name}
-                      </h5>
-                      <p className="text-xs text-slate-500 line-clamp-2 mt-1">
-                        {club.shortDesc}
-                      </p>
-                    </div>
-                  ))}
+                        <span className="block text-xs text-ink-600 mt-1 line-clamp-2">{reason}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* Matched Resources */}
-            {matchResult.matchedResources.length > 0 && (
-              <div>
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
-                  <Building2 className="w-3.5 h-3.5 text-slate-600" />
-                  <span>Campus Resources & Facilities ({matchResult.matchedResources.length})</span>
-                </h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {matchResult.matchedResources.map((res) => (
-                    <div
-                      key={res.id}
-                      onClick={() => onSelectResource(res)}
-                      className="p-3.5 rounded-xl border border-slate-200 hover:border-slate-300 hover:shadow-2xs transition-all bg-white cursor-pointer group"
-                    >
-                      <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-slate-100 text-slate-700">
-                        {res.category}
-                      </span>
-                      <h5 className="font-bold text-slate-900 text-sm group-hover:text-slate-700 transition-colors line-clamp-1 mt-1.5">
-                        {res.title}
-                      </h5>
-                      <p className="text-xs text-slate-500 line-clamp-2 mt-1">
-                        {res.description}
-                      </p>
-                    </div>
-                  ))}
+              {matchResult.matchedResources.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-semibold text-ink-700 mb-3 flex items-center gap-2">
+                    <Building2 className="w-4 h-4 text-ink-400" />
+                    Campus services
+                  </h3>
+                  <div className="space-y-2">
+                    {matchResult.matchedResources.map(({ resource, reason }) => (
+                      <button
+                        key={resource.id}
+                        type="button"
+                        onClick={() => onSelectResource(resource)}
+                        className="cc-card w-full text-left p-3.5 rounded-xl border border-ink-200 bg-white cursor-pointer"
+                      >
+                        <span className="flex items-center justify-between gap-2">
+                          <span className="font-semibold text-ink-900 text-sm truncate">{resource.name}</span>
+                          <span className="text-2xs text-ink-500 shrink-0">{resource.openHours}</span>
+                        </span>
+                        <span className="block text-xs text-ink-600 mt-1 line-clamp-2">{reason}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         )}
       </div>
