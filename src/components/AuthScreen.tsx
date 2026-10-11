@@ -14,14 +14,26 @@ import {
   KeyRound
 } from 'lucide-react';
 import { signInUser, signUpUser, signInWithGoogle } from '../firebase';
-import { User as FirebaseUser } from 'firebase/auth';
 import { UserRole } from '../types';
 
 interface AuthScreenProps {
-  onAuthSuccess: (user: FirebaseUser, role: UserRole) => void;
+  /**
+   * Called just before sign-in starts, with the role this person is allowed to
+   * have. 'organizer' is only reported after the passcode has been checked.
+   */
+  onRoleVerified: (role: UserRole) => void;
 }
 
-export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
+/**
+ * Organizer passcode. Set VITE_ORGANIZER_PASSCODE in your environment to change it.
+ * This is a convenience gate for a demo, not real security: anything shipped to the
+ * browser can be read. For production, grant the organizer role on the server
+ * (for example with Firebase custom claims) and enforce it in Firestore rules.
+ */
+const ORGANIZER_PASSCODE: string =
+  ((import.meta as any).env?.VITE_ORGANIZER_PASSCODE as string | undefined) || 'VIT-ORGANIZER-2026';
+
+export const AuthScreen: React.FC<AuthScreenProps> = ({ onRoleVerified }) => {
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [selectedRole, setSelectedRole] = useState<UserRole>('student');
   const [organizerCode, setOrganizerCode] = useState('');
@@ -36,6 +48,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [unauthorizedDomain, setUnauthorizedDomain] = useState<string | null>(null);
   const [isCopied, setIsCopied] = useState(false);
+
+  /** Returns an error message, or null when the selected role is allowed. */
+  const checkOrganizerCode = (): string | null => {
+    if (selectedRole !== 'organizer') return null;
+    if (!organizerCode.trim()) return 'Enter the organizer passcode.';
+    if (organizerCode.trim() !== ORGANIZER_PASSCODE) return 'That passcode is not correct.';
+    return null;
+  };
 
   const validateInputs = (): boolean => {
     const errors: { email?: string; password?: string; organizerCode?: string } = {};
@@ -54,11 +74,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
       errors.password = "Weak password. Minimum 6 characters required.";
     }
 
-    if (selectedRole === 'organizer' && mode === 'signup') {
-      if (!organizerCode.trim()) {
-        errors.organizerCode = "Organizer security passcode is required.";
-      }
-    }
+    const codeError = checkOrganizerCode();
+    if (codeError) errors.organizerCode = codeError;
 
     setFieldErrors(errors);
 
@@ -75,8 +92,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
     }
 
     if (errors.organizerCode) {
-      setErrorTitle("Organizer Verification Required");
-      setErrorMessage("Please enter an Organizer Authorization Key (or use demo code: VIT-ORGANIZER-2026).");
+      setErrorTitle("Organizer passcode needed");
+      setErrorMessage(errors.organizerCode);
       return false;
     }
 
@@ -89,6 +106,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
     setFieldErrors({});
     setSuccessMessage(null);
     setUnauthorizedDomain(null);
+    const codeError = checkOrganizerCode();
+    if (codeError) {
+      setFieldErrors({ organizerCode: codeError });
+      setErrorTitle("Organizer passcode needed");
+      setErrorMessage(codeError);
+      return;
+    }
+    onRoleVerified(selectedRole);
     setIsGoogleLoading(true);
     const { user, error, unauthorizedDomain: unauthDomain } = await signInWithGoogle();
     setIsGoogleLoading(false);
@@ -99,9 +124,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
         setUnauthorizedDomain(unauthDomain);
       }
     } else if (user) {
-      setSuccessMessage("Google sign-in successful!");
-      localStorage.setItem('campuspulse_active_role', selectedRole);
-      onAuthSuccess(user, selectedRole);
+      setSuccessMessage("Signed in.");
     }
   };
 
@@ -123,6 +146,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
       return;
     }
 
+    onRoleVerified(selectedRole);
     setIsLoading(true);
 
     if (mode === 'signin') {
@@ -143,9 +167,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
         }
         setErrorMessage(error);
       } else if (user) {
-        setSuccessMessage("Sign in successful!");
-        localStorage.setItem('campuspulse_active_role', selectedRole);
-        onAuthSuccess(user, selectedRole);
+        setSuccessMessage("Signed in.");
       }
     } else {
       const { user, error, errorCode } = await signUpUser(email, password);
@@ -165,9 +187,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
         }
         setErrorMessage(error);
       } else if (user) {
-        setSuccessMessage("Account created successfully!");
-        localStorage.setItem('campuspulse_active_role', selectedRole);
-        onAuthSuccess(user, selectedRole);
+        setSuccessMessage("Account created.");
       }
     }
   };
@@ -182,40 +202,40 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
   };
 
   return (
-    <div className="min-h-screen bg-[#FFF9F2] flex flex-col justify-center py-12 sm:px-6 lg:px-8 font-sans selection:bg-orange-600 selection:text-white">
+    <div className="cc-auth min-h-screen bg-paper flex flex-col justify-center py-12 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md text-center px-4">
         {/* Campus Brand Badge */}
-        <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-orange-600 text-white shadow-md mb-3.5">
+        <div className="cc-btn-brand inline-flex items-center justify-center w-12 h-12 rounded-2xl shadow-md mb-3.5">
           <Network className="w-6 h-6" />
         </div>
         
-        <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-stone-900">
+        <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight text-ink-900">
           CampusConnect
         </h1>
-        <p className="mt-1 text-xs text-stone-600 font-medium">
-          Vellore Institute of Technology • Student & Event Portal
+        <p className="mt-1 text-xs text-ink-600 font-medium">
+          Events, clubs and services at Vellore Institute of Technology
         </p>
       </div>
 
       <div className="mt-6 sm:mx-auto sm:w-full sm:max-w-md px-4 sm:px-0">
-        <div className="bg-white py-8 px-6 sm:px-9 rounded-2xl border border-orange-200/90 shadow-xl shadow-orange-950/5 space-y-5">
+        <div className="cc-auth-card bg-white py-8 px-6 sm:px-9 rounded-3xl border border-ink-200 shadow-xl shadow-brand-950/5 space-y-5">
           
           {/* Account Role Selector */}
           <div>
-            <label className="block text-[11px] font-bold text-stone-700 uppercase tracking-wider mb-2">
+            <label className="block text-xs font-bold text-ink-700 mb-2">
               Select Your Campus Role
             </label>
-            <div className="grid grid-cols-2 gap-2 p-1 bg-orange-50/80 border border-orange-200 rounded-xl">
+            <div className="grid grid-cols-2 gap-2 p-1 bg-brand-50/80 border border-brand-200 rounded-xl">
               <button
                 type="button"
                 onClick={() => setSelectedRole('student')}
                 className={`py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                   selectedRole === 'student'
-                    ? 'bg-white text-orange-950 shadow-xs border border-orange-300'
-                    : 'text-stone-600 hover:text-stone-900'
+                    ? 'bg-white text-brand-950 shadow-xs border border-brand-300'
+                    : 'text-ink-600 hover:text-ink-900'
                 }`}
               >
-                <GraduationCap className="w-4 h-4 text-orange-600" />
+                <GraduationCap className="w-4 h-4 text-brand-600" />
                 <span>Student</span>
               </button>
 
@@ -224,8 +244,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
                 onClick={() => setSelectedRole('organizer')}
                 className={`py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                   selectedRole === 'organizer'
-                    ? 'bg-white text-orange-950 shadow-xs border border-orange-300'
-                    : 'text-stone-600 hover:text-stone-900'
+                    ? 'bg-white text-brand-950 shadow-xs border border-brand-300'
+                    : 'text-ink-600 hover:text-ink-900'
                 }`}
               >
                 <Briefcase className="w-4 h-4 text-amber-600" />
@@ -233,26 +253,26 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
               </button>
             </div>
             {selectedRole === 'organizer' ? (
-              <p className="text-[11px] text-amber-900 bg-amber-50 p-2.5 rounded-lg mt-2 border border-amber-200 leading-relaxed">
+              <p className="text-xs text-amber-900 bg-amber-50 p-2.5 rounded-lg mt-2 border border-amber-200 leading-relaxed">
                 🔒 <strong>Organizer Account:</strong> Exclusively authorized to create, update, delete events, and broadcast announcements.
               </p>
             ) : (
-              <p className="text-[11px] text-stone-500 mt-1.5 px-0.5">
+              <p className="text-xs text-ink-500 mt-1.5 px-0.5">
                 Students can browse, search with AI, RSVP to events, participate in discussions, and join clubs.
               </p>
             )}
           </div>
 
           {/* Tab Selection */}
-          <div className="flex p-1 bg-stone-100 rounded-xl">
+          <div className="flex p-1 bg-ink-100 rounded-xl">
             <button
               id="btn-tab-signin"
               type="button"
               onClick={() => switchMode('signin')}
               className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
                 mode === 'signin'
-                  ? 'bg-white text-stone-900 shadow-2xs'
-                  : 'text-stone-500 hover:text-stone-900'
+                  ? 'bg-white text-ink-900 shadow-2xs'
+                  : 'text-ink-500 hover:text-ink-900'
               }`}
             >
               Sign In
@@ -263,8 +283,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
               onClick={() => switchMode('signup')}
               className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
                 mode === 'signup'
-                  ? 'bg-white text-stone-900 shadow-2xs'
-                  : 'text-stone-500 hover:text-stone-900'
+                  ? 'bg-white text-ink-900 shadow-2xs'
+                  : 'text-ink-500 hover:text-ink-900'
               }`}
             >
               Create Account
@@ -273,10 +293,10 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
 
           {/* Header Title for Mode */}
           <div>
-            <h2 className="text-lg font-bold text-stone-900">
+            <h2 className="text-lg font-bold text-ink-900">
               {mode === 'signin' ? 'Welcome back' : `Create ${selectedRole === 'organizer' ? 'Organizer' : 'Student'} Account`}
             </h2>
-            <p className="text-xs text-stone-500 mt-0.5">
+            <p className="text-xs text-ink-500 mt-0.5">
               {mode === 'signin' 
                 ? `Sign in as ${selectedRole} to manage your campus schedule.`
                 : `Register your account to access VIT campus events.`}
@@ -289,10 +309,10 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
             type="button"
             onClick={handleGoogleSignIn}
             disabled={isLoading || isGoogleLoading}
-            className="w-full py-2.5 px-4 rounded-xl border border-stone-200 hover:bg-stone-50 text-stone-800 text-xs sm:text-sm font-semibold transition-all flex items-center justify-center gap-2.5 cursor-pointer shadow-2xs disabled:opacity-60"
+            className="w-full py-2.5 px-4 rounded-xl border border-ink-200 hover:bg-ink-50 text-ink-800 text-xs sm:text-sm font-semibold transition-all flex items-center justify-center gap-2.5 cursor-pointer shadow-2xs disabled:opacity-60"
           >
             {isGoogleLoading ? (
-              <span className="text-stone-600">Connecting Google...</span>
+              <span className="text-ink-600">Connecting Google...</span>
             ) : (
               <>
                 <svg className="w-4 h-4" viewBox="0 0 24 24">
@@ -320,11 +340,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
 
           {/* Divider */}
           <div className="relative flex py-1 items-center">
-            <div className="flex-grow border-t border-stone-200" />
-            <span className="flex-shrink mx-3 text-[11px] font-medium text-stone-400">
+            <div className="flex-grow border-t border-ink-200" />
+            <span className="flex-shrink mx-3 text-xs font-medium text-ink-400">
               or continue with email
             </span>
-            <div className="flex-grow border-t border-stone-200" />
+            <div className="flex-grow border-t border-ink-200" />
           </div>
 
           {/* Error Message Box */}
@@ -348,22 +368,22 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
               </div>
 
               {unauthorizedDomain && (
-                <div className="pt-2 border-t border-rose-200/80 space-y-2 text-[11px]">
-                  <div className="flex items-center justify-between gap-2 p-1.5 px-2.5 rounded-lg bg-white border border-rose-200 text-stone-700">
+                <div className="pt-2 border-t border-rose-200/80 space-y-2 text-xs">
+                  <div className="flex items-center justify-between gap-2 p-1.5 px-2.5 rounded-lg bg-white border border-rose-200 text-ink-700">
                     <span className="font-mono truncate select-all">{unauthorizedDomain}</span>
                     <button
                       type="button"
                       onClick={handleCopyDomain}
-                      className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded bg-stone-900 text-white text-[10px] font-semibold hover:bg-stone-800 transition-colors cursor-pointer"
+                      className="cc-btn-ink shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded text-2xs font-semibold transition-colors cursor-pointer"
                     >
                       {isCopied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
                       <span>{isCopied ? "Copied!" : "Copy Domain"}</span>
                     </button>
                   </div>
 
-                  <div className="text-stone-600 space-y-1 pl-1">
-                    <p className="font-medium text-stone-800">Quick fix in Firebase Console:</p>
-                    <ol className="list-decimal pl-4 space-y-0.5 text-stone-600">
+                  <div className="text-ink-600 space-y-1 pl-1">
+                    <p className="font-medium text-ink-800">Quick fix in Firebase Console:</p>
+                    <ol className="list-decimal pl-4 space-y-0.5 text-ink-600">
                       <li>Go to <b>Authentication</b> → <b>Settings</b> tab.</li>
                       <li>Scroll down to <b>Authorized domains</b>.</li>
                       <li>Click <b>Add domain</b>, paste the copied domain, and save.</li>
@@ -390,12 +410,12 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
             <div>
               <label 
                 htmlFor="auth-email-input"
-                className="block text-[11px] font-semibold text-stone-700 uppercase tracking-wider mb-1.5"
+                className="block text-xs font-semibold text-ink-700 mb-1.5"
               >
                 Email Address
               </label>
               <div className="relative">
-                <Mail className={`w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 ${fieldErrors.email ? 'text-rose-500' : 'text-stone-400'}`} />
+                <Mail className={`w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 ${fieldErrors.email ? 'text-rose-500' : 'text-ink-400'}`} />
                 <input
                   id="auth-email-input"
                   type="email"
@@ -407,15 +427,15 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
                   placeholder={selectedRole === 'organizer' ? 'organizer@vit.ac.in' : 'student@vitstudent.ac.in'}
                   required
                   autoComplete="email"
-                  className={`w-full rounded-xl pl-10 pr-3.5 py-2.5 text-xs sm:text-sm text-stone-900 placeholder-stone-400 focus:outline-none transition-all ${
+                  className={`w-full rounded-xl pl-10 pr-3.5 py-2.5 text-xs sm:text-sm text-ink-900 placeholder-ink-400 focus:outline-none transition-all ${
                     fieldErrors.email 
                       ? 'bg-rose-50/50 border border-rose-400 focus:border-rose-600 focus:bg-white' 
-                      : 'bg-stone-50 border border-stone-200 focus:border-orange-600 focus:bg-white'
+                      : 'bg-ink-50 border border-ink-200 focus:border-brand-600 focus:bg-white'
                   }`}
                 />
               </div>
               {fieldErrors.email && (
-                <p className="mt-1 text-[11px] text-rose-600 font-medium flex items-center gap-1">
+                <p className="mt-1 text-xs text-rose-600 font-medium flex items-center gap-1">
                   <span>{fieldErrors.email}</span>
                 </p>
               )}
@@ -425,18 +445,18 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
               <div className="flex items-center justify-between mb-1.5">
                 <label 
                   htmlFor="auth-password-input"
-                  className="block text-[11px] font-semibold text-stone-700 uppercase tracking-wider"
+                  className="block text-xs font-semibold text-ink-700"
                 >
                   Password
                 </label>
                 {mode === 'signup' && (
-                  <span className={`text-[10px] font-medium ${password.length >= 6 ? 'text-emerald-600' : 'text-stone-400'}`}>
+                  <span className={`text-2xs font-medium ${password.length >= 6 ? 'text-emerald-600' : 'text-ink-400'}`}>
                     {password.length >= 6 ? '✓ Strong enough' : 'Min. 6 characters'}
                   </span>
                 )}
               </div>
               <div className="relative">
-                <Lock className={`w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 ${fieldErrors.password ? 'text-rose-500' : 'text-stone-400'}`} />
+                <Lock className={`w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 ${fieldErrors.password ? 'text-rose-500' : 'text-ink-400'}`} />
                 <input
                   id="auth-password-input"
                   type="password"
@@ -448,32 +468,32 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
                   placeholder="••••••••"
                   required
                   autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
-                  className={`w-full rounded-xl pl-10 pr-3.5 py-2.5 text-xs sm:text-sm text-stone-900 placeholder-stone-400 focus:outline-none transition-all ${
+                  className={`w-full rounded-xl pl-10 pr-3.5 py-2.5 text-xs sm:text-sm text-ink-900 placeholder-ink-400 focus:outline-none transition-all ${
                     fieldErrors.password 
                       ? 'bg-rose-50/50 border border-rose-400 focus:border-rose-600 focus:bg-white' 
-                      : 'bg-stone-50 border border-stone-200 focus:border-orange-600 focus:bg-white'
+                      : 'bg-ink-50 border border-ink-200 focus:border-brand-600 focus:bg-white'
                   }`}
                 />
               </div>
               {fieldErrors.password && (
-                <p className="mt-1 text-[11px] text-rose-600 font-medium flex items-center gap-1">
+                <p className="mt-1 text-xs text-rose-600 font-medium flex items-center gap-1">
                   <span>{fieldErrors.password}</span>
                 </p>
               )}
             </div>
 
             {/* Organizer Verification Fields */}
-            {selectedRole === 'organizer' && mode === 'signup' && (
+            {selectedRole === 'organizer' && (
               <div className="p-3 bg-amber-50/70 rounded-xl border border-amber-200/90 space-y-3">
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <label className="block text-[11px] font-bold text-amber-950 uppercase tracking-wider">
+                    <label className="block text-xs font-bold text-amber-950">
                       Organizer Passcode
                     </label>
                     <button
                       type="button"
                       onClick={() => setOrganizerCode('VIT-ORGANIZER-2026')}
-                      className="text-[10px] text-orange-700 hover:underline font-bold cursor-pointer"
+                      className="text-2xs text-brand-700 hover:underline font-bold cursor-pointer"
                     >
                       Fill Demo (VIT-ORGANIZER-2026)
                     </button>
@@ -482,26 +502,38 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
                     <KeyRound className="w-4 h-4 text-amber-600 absolute left-3 top-1/2 -translate-y-1/2" />
                     <input
                       type="text"
+                      aria-label="Organizer passcode"
+                      aria-invalid={Boolean(fieldErrors.organizerCode)}
+                      autoComplete="off"
                       value={organizerCode}
-                      onChange={(e) => setOrganizerCode(e.target.value)}
+                      onChange={(e) => {
+                        setOrganizerCode(e.target.value);
+                        if (fieldErrors.organizerCode) setFieldErrors((prev) => ({ ...prev, organizerCode: undefined }));
+                      }}
                       placeholder="e.g. VIT-ORGANIZER-2026"
-                      className="w-full rounded-lg pl-9 pr-3 py-2 text-xs bg-white border border-amber-300 focus:outline-none focus:border-orange-600 text-stone-900"
+                      className="w-full rounded-lg pl-9 pr-3 py-2 text-xs bg-white border border-amber-300 focus:outline-none focus:border-brand-600 text-ink-900"
                     />
                   </div>
                 </div>
 
+                {mode === 'signup' && (
                 <div>
-                  <label className="block text-[11px] font-bold text-amber-950 uppercase tracking-wider mb-1">
+                  <label className="block text-xs font-bold text-amber-950 mb-1">
                     Club or Department Name
                   </label>
                   <input
                     type="text"
+                    aria-label="Club or department name"
                     value={organizerDept}
                     onChange={(e) => setOrganizerDept(e.target.value)}
                     placeholder="e.g. GDSC Campus / Student Council"
-                    className="w-full rounded-lg px-3 py-2 text-xs bg-white border border-amber-300 focus:outline-none focus:border-orange-600 text-stone-900"
+                    className="w-full rounded-lg px-3 py-2 text-xs bg-white border border-amber-300 focus:outline-none focus:border-brand-600 text-ink-900"
                   />
                 </div>
+                )}
+                {fieldErrors.organizerCode && (
+                  <p className="text-xs text-rose-700 font-medium">{fieldErrors.organizerCode}</p>
+                )}
               </div>
             )}
 
@@ -509,7 +541,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
               id="btn-auth-submit"
               type="submit"
               disabled={isLoading || isGoogleLoading}
-              className="w-full mt-2 py-2.5 px-4 rounded-xl text-xs sm:text-sm font-bold bg-orange-600 hover:bg-orange-700 text-white transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+              className="cc-btn-brand w-full mt-2 py-2.5 px-4 rounded-xl text-xs sm:text-sm font-bold transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
             >
               <span>
                 {isLoading 
@@ -523,25 +555,25 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
           </form>
 
           {/* Mode Switch Helper Link */}
-          <div className="text-center pt-1 border-t border-stone-100">
+          <div className="text-center pt-1 border-t border-ink-100">
             {mode === 'signin' ? (
-              <p className="text-xs text-stone-500">
+              <p className="text-xs text-ink-500">
                 Don't have an account?{' '}
                 <button
                   type="button"
                   onClick={() => switchMode('signup')}
-                  className="font-semibold text-orange-600 underline hover:text-orange-700 cursor-pointer"
+                  className="font-semibold text-brand-600 underline hover:text-brand-700 cursor-pointer"
                 >
                   Create one now
                 </button>
               </p>
             ) : (
-              <p className="text-xs text-stone-500">
+              <p className="text-xs text-ink-500">
                 Already registered?{' '}
                 <button
                   type="button"
                   onClick={() => switchMode('signin')}
-                  className="font-semibold text-orange-600 underline hover:text-orange-700 cursor-pointer"
+                  className="font-semibold text-brand-600 underline hover:text-brand-700 cursor-pointer"
                 >
                   Sign in here
                 </button>
@@ -552,9 +584,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
         </div>
 
         {/* Security / Notice Pill */}
-        <div className="mt-6 text-center text-xs text-stone-400 flex items-center justify-center gap-1.5">
+        <div className="mt-6 text-center text-xs text-ink-400 flex items-center justify-center gap-1.5">
           <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-          <span>Secured via Firebase Authentication • Role Gated</span>
+          <span>Sign-in is handled by Firebase Authentication</span>
         </div>
       </div>
     </div>
