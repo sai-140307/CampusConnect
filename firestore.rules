@@ -1,4 +1,13 @@
 rules_version = '2';
+
+// CampusConnect database rules.
+//
+// Roles are documents in two collections that only the rules control:
+//   admins/{uid}      added by hand in the Firebase console, never from the app
+//   organizers/{uid}  added by an admin when they approve a request
+// The app reads these to show the right tools, but these rules are what
+// actually stop a student from publishing, approving or deleting.
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -6,29 +15,100 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isOwner(userId) {
+    function isSelf(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    // A profile can only be read and written by the person it belongs to.
+    // Email/password accounts must click the verification link first.
+    // Google accounts are verified by Google.
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isVerified() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function isOrganizer() {
+      return isVerified() && exists(/databases/$(database)/documents/organizers/$(request.auth.uid));
+    }
+
+    function isString(value, max) {
+      return value is string && value.size() > 0 && value.size() <= max;
+    }
+
+    // ---------------------------------------------------------------- roles
+
+    match /admins/{userId} {
+      allow read: if isSelf(userId) || isAdmin();
+      allow write: if false;
+    }
+
+    match /organizers/{userId} {
+      allow read: if isSelf(userId) || isAdmin();
+      allow create, update: if isAdmin()
+        && isString(request.resource.data.email, 200)
+        && request.resource.data.grantedBy == request.auth.uid;
+      allow delete: if isAdmin();
+    }
+
+    // A person asks for organizer access; an admin decides.
+    match /organizerRequests/{userId} {
+      allow read: if isSelf(userId) || isAdmin();
+      // Create or re-submit your own request, always as "pending", with your own email.
+      allow create, update: if isSelf(userId) && isVerified()
+        && request.resource.data.uid == userId
+        && request.resource.data.status == 'pending'
+        && request.resource.data.email == request.auth.token.email
+        && isString(request.resource.data.name, 120)
+        && isString(request.resource.data.department, 120)
+        && (!('reason' in request.resource.data) || request.resource.data.reason.size() <= 500);
+      // Only an admin can approve or reject, and only the decision fields change.
+      allow update: if isAdmin()
+        && request.resource.data.status in ['approved', 'rejected']
+        && request.resource.data.decidedBy == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'decidedBy', 'decidedAt']);
+      allow delete: if isSelf(userId) || isAdmin();
+    }
+
+    // Admin actions. Can be added by admins, read by admins, never changed.
+    match /auditLog/{entryId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && request.resource.data.actorUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // ---------------------------------------------------------------- people
+
+    // A profile can only be read and written by its owner. Admins can read
+    // profiles to count accounts.
     match /users/{userId} {
-      allow read: if isOwner(userId);
-      allow create, update: if isOwner(userId);
+      allow read: if isSelf(userId) || isAdmin();
+      allow create, update: if isSelf(userId);
       allow delete: if false;
     }
 
-    // Events published by organizers. Any signed-in person can read them. An event
-    // records who published it, and only that person can change or delete it.
-    // The organizer role itself is still checked in the app; before a real launch,
-    // move it to a custom claim and also require it here:
-    //   && request.auth.token.organizer == true
+    // ---------------------------------------------------------------- events
+
+    function validEvent(data) {
+      return isString(data.title, 150)
+        && data.date is string && data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && data.startTime is string && data.startTime.matches('^[0-9]{2}:[0-9]{2}$')
+        && data.endTime is string && data.endTime.matches('^[0-9]{2}:[0-9]{2}$')
+        && data.capacity is int && data.capacity > 0 && data.capacity <= 50000
+        && data.rsvpCount is int && data.rsvpCount >= 0
+        && data.createdBy == request.auth.uid;
+    }
+
+    // Anyone signed in can read events: past, today and upcoming.
+    // Organizers publish their own; admins can publish, load the schedule and
+    // delete any event. An organizer can only change or delete what they published.
     match /events/{eventId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid;
-      allow update: if isSignedIn()
-        && resource.data.createdBy == request.auth.uid
-        && request.resource.data.createdBy == request.auth.uid;
-      allow delete: if isSignedIn() && resource.data.createdBy == request.auth.uid;
+      allow create: if (isOrganizer() || isAdmin()) && validEvent(request.resource.data);
+      allow update: if validEvent(request.resource.data)
+        && (isAdmin() || (isOrganizer() && resource.data.createdBy == request.auth.uid));
+      allow delete: if isAdmin() || (isOrganizer() && resource.data.createdBy == request.auth.uid);
     }
 
     // Registrations: one document per person per event, named
@@ -39,23 +119,23 @@ service cloud.firestore {
       allow create: if isSignedIn()
         && request.resource.data.uid == request.auth.uid
         && registrationId == request.resource.data.eventId + '__' + request.resource.data.eventDate + '__' + request.auth.uid
-        && request.resource.data.name is string
-        && request.resource.data.name.size() <= 120;
-      allow delete: if isSignedIn() && resource.data.uid == request.auth.uid;
+        && exists(/databases/$(database)/documents/events/$(request.resource.data.eventId))
+        && isString(request.resource.data.name, 120);
+      allow delete: if (isSignedIn() && resource.data.uid == request.auth.uid) || isAdmin();
       allow update: if false;
     }
 
-    // Discussion messages: signed-in people can read and post. A message can be
-    // changed only to update its like count, and can never be deleted from the client.
+    // ---------------------------------------------------------------- discussion
+
+    // Signed-in people can read and post. A message can be changed only to
+    // update its like count. Only admins can delete it (moderation).
     match /campus_chats/{messageId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn()
-        && request.resource.data.text is string
-        && request.resource.data.text.size() > 0
-        && request.resource.data.text.size() <= 2000;
+        && isString(request.resource.data.text, 2000);
       allow update: if isSignedIn()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes']);
-      allow delete: if false;
+      allow delete: if isAdmin();
     }
 
     match /dispatched_emails/{emailId} {

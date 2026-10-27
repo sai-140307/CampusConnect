@@ -39,6 +39,8 @@ interface EventDetailModalProps {
   messages?: ChatMessage[];
   onSendMessage?: (text: string, tag?: ChatMessage['tag']) => void;
   onDeleteEvent?: (eventId: string) => void;
+  currentUid?: string;
+  isAdmin?: boolean;
 }
 
 export const EventDetailModal: React.FC<EventDetailModalProps> = ({
@@ -54,6 +56,8 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
   messages = [],
   onSendMessage,
   onDeleteEvent,
+  currentUid,
+  isAdmin = false,
 }) => {
   const now = useNow();
   const [icsDownloaded, setIcsDownloaded] = useState(false);
@@ -485,7 +489,7 @@ export const EventDetailModal: React.FC<EventDetailModalProps> = ({
               <span>Open full discussion</span>
             </button>
 
-            {isOrganizer && onDeleteEvent && event.createdBy && (
+            {onDeleteEvent && (isAdmin || (isOrganizer && event.createdBy === currentUid)) && (
               <button
                 onClick={() => {
                   if (window.confirm(`Are you sure you want to delete "${event.title}"?`)) {
