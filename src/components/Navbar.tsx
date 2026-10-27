@@ -16,7 +16,8 @@ import {
   GraduationCap,
   Briefcase,
   Sun,
-  Moon
+  Moon,
+  ShieldCheck
 } from 'lucide-react';
 import { NotificationItem, UserProfile } from '../types';
 import { User as FirebaseUser } from 'firebase/auth';
@@ -37,6 +38,8 @@ interface NavbarProps {
   onOpenVideoShowcase?: () => void;
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
+  isAdmin?: boolean;
+  onOpenAdmin?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -54,6 +57,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenVideoShowcase,
   theme,
   onToggleTheme,
+  isAdmin = false,
+  onOpenAdmin,
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
 
@@ -101,7 +106,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                   CampusConnect
                 </span>
                 <span className="text-xs text-ink-500 font-medium block whitespace-nowrap">
-                  {isOrganizer ? 'Organizer account' : 'VIT Vellore'}
+                  {isAdmin ? 'Admin account' : isOrganizer ? 'Organizer account' : 'VIT Vellore'}
                 </span>
               </div>
             </button>
@@ -153,6 +158,18 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <Moon className="w-[18px] h-[18px]" />
               )}
             </button>
+
+            {isAdmin && onOpenAdmin && (
+              <button
+                id="btn-admin-console"
+                onClick={onOpenAdmin}
+                className="cc-btn-ink cc-press inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold cursor-pointer whitespace-nowrap"
+                aria-label="Admin console"
+              >
+                <ShieldCheck className="w-4 h-4" />
+                <span className="hidden sm:inline">Admin</span>
+              </button>
+            )}
 
             {isOrganizer && (
               <button

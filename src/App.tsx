@@ -16,14 +16,12 @@ import {
 } from './types';
 
 import {
-  MOCK_EVENTS,
   MOCK_CLUBS,
   MOCK_RESOURCES,
   INITIAL_USER,
   buildInitialNotifications,
   INITIAL_CHAT_MESSAGES,
 } from './data/mockData';
-import { SEED_CYCLE_START } from './data/mockEvents';
 
 import { requestAIMatch } from './services/aiService';
 import { Navbar } from './components/Navbar';
@@ -44,6 +42,8 @@ import { UserProfileModal } from './components/UserProfileModal';
 import { EmailNotificationModal } from './components/EmailNotificationModal';
 import { CampusVideoShowcase } from './components/CampusVideoShowcase';
 import { AuthScreen } from './components/AuthScreen';
+import { AdminPanel } from './components/AdminPanel';
+import { OrganizerAccessCard } from './components/OrganizerAccessCard';
 import { Toast } from './components/Toast';
 
 import {
@@ -63,6 +63,10 @@ import {
   registerForEvent,
   cancelRegistration,
   registrationId,
+  subscribeToRoles,
+  RoleState,
+  refreshVerification,
+  sendVerificationEmail,
   FirebaseUser,
 } from './firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
@@ -82,12 +86,9 @@ const STORAGE_KEYS = {
   USER: 'campusconnect_user_v1',
   NOTIFICATIONS: 'campusconnect_notifications_v1',
   MESSAGES: 'campusconnect_messages_v1',
-  SEED_CYCLE: 'campusconnect_seed_cycle_v1',
   THEME: 'campusconnect_theme_v1',
 };
 
-const SEED_EVENT_IDS = new Set(MOCK_EVENTS.map((e) => e.id));
-const DAY_MS = 86_400_000;
 
 const DEFAULT_EMAIL_SETTINGS: EmailNotificationSettings = {
   enabled: true,
@@ -110,7 +111,9 @@ function normalizeProfile(base: UserProfile, incoming: Partial<UserProfile> | nu
     ...base,
     ...data,
     name: (typeof data.name === 'string' && data.name.trim()) || base.name,
-    role: data.role === 'organizer' || data.role === 'student' ? data.role : base.role,
+    // The role is never taken from the profile: it comes from the admins and
+    // organizers collections, which only an admin can change.
+    role: base.role,
     rsvpdEvents: asStringArray(data.rsvpdEvents, base.rsvpdEvents),
     savedEvents: asStringArray(data.savedEvents, base.savedEvents),
     joinedClubs: asStringArray(data.joinedClubs, base.joinedClubs),
@@ -129,7 +132,6 @@ function cloudProfileFields(profile: UserProfile) {
     major: profile.major,
     year: profile.year,
     campusZone: profile.campusZone,
-    role: profile.role,
     interests: profile.interests,
     preferredPerks: profile.preferredPerks,
     rsvpdEvents: profile.rsvpdEvents,
@@ -137,24 +139,12 @@ function cloudProfileFields(profile: UserProfile) {
     joinedClubs: profile.joinedClubs,
     savedResources: profile.savedResources,
     emailSettings: profile.emailSettings || DEFAULT_EMAIL_SETTINGS,
-    seedCycle: SEED_CYCLE_START,
-  };
-}
-
-/** RSVPs to sample events belong to one schedule cycle; drop them when a new cycle starts. */
-function dropStaleSeedEvents(profile: UserProfile, cycle: string | null | undefined): UserProfile {
-  if (!cycle || cycle === SEED_CYCLE_START) return profile;
-  return {
-    ...profile,
-    rsvpdEvents: profile.rsvpdEvents.filter((id) => !SEED_EVENT_IDS.has(id)),
-    savedEvents: profile.savedEvents.filter((id) => !SEED_EVENT_IDS.has(id)),
   };
 }
 
 function loadInitialProfile(): UserProfile {
   const stored = readJson<Partial<UserProfile> | null>(STORAGE_KEYS.USER, null);
-  const profile = normalizeProfile(INITIAL_USER, stored);
-  return dropStaleSeedEvents(profile, readString(STORAGE_KEYS.SEED_CYCLE));
+  return { ...normalizeProfile(INITIAL_USER, stored), role: 'student' };
 }
 
 /** Identifies one occurrence of an event: sample events repeat on new dates. */
@@ -199,13 +189,16 @@ export default function App() {
   // Auth
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [isAuthChecking, setIsAuthChecking] = useState(true);
-  /** Role chosen (and verified) on the sign-in screen, applied when sign-in completes. */
-  const pendingRoleRef = useRef<UserRole | null>(null);
+  /** Role from the database: admins and organizers collections. */
+  const [roles, setRoles] = useState<RoleState>({ isAdmin: false, isOrganizer: false, loaded: false });
+  const [emailVerified, setEmailVerified] = useState(true);
+  const [isAdminOpen, setIsAdminOpen] = useState(false);
 
   // Data
   const [userProfile, setUserProfile] = useState<UserProfile>(loadInitialProfile);
-  /** Events organizers have published, live from the shared database. */
+  /** Every event, live from the shared database. */
   const [publishedEvents, setPublishedEvents] = useState<CampusEvent[]>([]);
+  const [eventsLoaded, setEventsLoaded] = useState(false);
   /** Everyone's registrations, live from the shared database. */
   const [registrations, setRegistrations] = useState<EventRegistration[]>([]);
   const [registrationsLoaded, setRegistrationsLoaded] = useState(false);
@@ -218,8 +211,10 @@ export default function App() {
 
   const [notifications, setNotifications] = useState<NotificationItem[]>(() => {
     const stored = readJson<NotificationItem[] | null>(STORAGE_KEYS.NOTIFICATIONS, null);
-    return Array.isArray(stored) ? dedupeById(stored) : buildInitialNotifications(MOCK_EVENTS);
+    return Array.isArray(stored) ? dedupeById(stored) : buildInitialNotifications([]);
   });
+  /** First visit on this device: write starter notifications once the events arrive. */
+  const needsStarterNotificationsRef = useRef(readJson<unknown>(STORAGE_KEYS.NOTIFICATIONS, null) === null);
 
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
     const stored = readJson<ChatMessage[] | null>(STORAGE_KEYS.MESSAGES, null);
@@ -255,12 +250,10 @@ export default function App() {
     return map;
   }, [registrations]);
 
-  // Every event: published ones first, then the built-in samples. The "going"
+  // Every event comes from the database: past, today and upcoming. The "going"
   // count is the event's starting number plus real registrations from everyone.
   const events = useMemo(() => {
-    const cutoff = syncedNow() - 30 * DAY_MS;
-    const published = publishedEvents.filter((e) => !SEED_EVENT_IDS.has(e.id) && eventEndMs(e) > cutoff);
-    return [...published, ...MOCK_EVENTS].map((e) => {
+    return publishedEvents.map((e) => {
       const extra = registrationsByOccurrence.get(occurrenceKey(e.id, e.date))?.length || 0;
       return extra ? { ...e, rsvpCount: e.rsvpCount + extra } : e;
     });
@@ -288,7 +281,6 @@ export default function App() {
 
   useEffect(() => {
     writeJson(STORAGE_KEYS.USER, userProfile);
-    writeString(STORAGE_KEYS.SEED_CYCLE, SEED_CYCLE_START);
   }, [userProfile]);
 
   useEffect(() => {
@@ -335,12 +327,19 @@ export default function App() {
   useEffect(() => {
     if (!signedInUid) {
       setPublishedEvents([]);
+      setEventsLoaded(false);
       setRegistrations([]);
       setRegistrationsLoaded(false);
       return;
     }
     setSharedDataError(false);
-    const stopEvents = subscribeToEvents(setPublishedEvents, () => setSharedDataError(true));
+    const stopEvents = subscribeToEvents(
+      (list) => {
+        setPublishedEvents(list);
+        setEventsLoaded(true);
+      },
+      () => setSharedDataError(true)
+    );
     const stopRegistrations = subscribeToRegistrations(
       (list) => {
         setRegistrations(list);
@@ -369,6 +368,31 @@ export default function App() {
       return { ...prev, rsvpdEvents: mine };
     });
   }, [registrations, registrationsLoaded, signedInUid, events]);
+
+  // ---- Roles ---------------------------------------------------------------
+
+  useEffect(() => {
+    if (!signedInUid) {
+      setRoles({ isAdmin: false, isOrganizer: false, loaded: false });
+      return;
+    }
+    return subscribeToRoles(signedInUid, setRoles);
+  }, [signedInUid]);
+
+  // Admins can do everything an organizer can.
+  const canOrganize = roles.isOrganizer || roles.isAdmin;
+  useEffect(() => {
+    const role: UserRole = canOrganize ? 'organizer' : 'student';
+    setUserProfile((prev) => (prev.role === role ? prev : { ...prev, role }));
+    if (!roles.isAdmin) setIsAdminOpen(false);
+  }, [canOrganize, roles.isAdmin]);
+
+  useEffect(() => {
+    if (!needsStarterNotificationsRef.current || !eventsLoaded || publishedEvents.length === 0) return;
+    needsStarterNotificationsRef.current = false;
+    const starters = buildInitialNotifications(publishedEvents);
+    setNotifications((prev) => dedupeById([...prev, ...starters]));
+  }, [eventsLoaded, publishedEvents]);
 
   // ---- Wrap-up notices for events the student attended --------------------
 
@@ -424,6 +448,7 @@ export default function App() {
       cloudReadyRef.current = false;
       lastCloudProfileRef.current = '';
       setFirebaseUser(user);
+      setEmailVerified(user ? user.emailVerified : true);
 
       if (!user) {
         setIsAuthChecking(false);
@@ -433,22 +458,15 @@ export default function App() {
       const cloud = await fetchUserProfileFromFirestore(user.uid);
       if (cancelled) return;
 
-      const verifiedRole = pendingRoleRef.current;
-      pendingRoleRef.current = null;
       const fallbackName = user.displayName || (user.email ? user.email.split('@')[0] : '');
 
       setUserProfile((prev) => {
         // A different account signed in on this device: start from a clean profile.
         const base = prev.email && user.email && prev.email !== user.email ? INITIAL_USER : prev;
         let next = normalizeProfile(base, cloud as Partial<UserProfile> | null);
-        next = dropStaleSeedEvents(next, cloud?.seedCycle);
         next.email = user.email || next.email;
         if (!cloud?.name && fallbackName && (next.name === INITIAL_USER.name || !next.name)) next.name = fallbackName;
-        // Organizer access is granted on sign-in (with the passcode) and then remembered.
-        // If the cloud profile could not be read, keep the role this device already had
-        // rather than silently demoting (and then overwriting) an organizer.
-        const knownOrganizer = cloud ? cloud.role === 'organizer' : base.role === 'organizer';
-        next.role = verifiedRole === 'organizer' || knownOrganizer ? 'organizer' : 'student';
+        next.role = 'student'; // raised by the role listener if the database says so
         next.emailSettings = {
           ...DEFAULT_EMAIL_SETTINGS,
           ...next.emailSettings,
@@ -466,9 +484,9 @@ export default function App() {
           (snap: any) => {
             // Skip echoes of our own pending writes.
             if (!snap.exists() || snap.metadata?.hasPendingWrites) return;
-            const data = snap.data() as Partial<UserProfile> & { seedCycle?: string };
+            const data = snap.data() as Partial<UserProfile>;
             setUserProfile((prev) => {
-              const merged = dropStaleSeedEvents(normalizeProfile(prev, data), data.seedCycle);
+              const merged = normalizeProfile(prev, data);
               merged.email = user.email || merged.email;
               const mergedJson = JSON.stringify(cloudProfileFields(merged));
               lastCloudProfileRef.current = mergedJson;
@@ -666,7 +684,7 @@ export default function App() {
   );
 
   const requireOrganizer = (): boolean => {
-    if (userProfile.role === 'organizer') return true;
+    if (canOrganize) return true;
     setIsRestrictedModalOpen(true);
     return false;
   };
@@ -727,10 +745,6 @@ export default function App() {
 
   const handleDeleteEvent = (eventId: string) => {
     if (!requireOrganizer()) return;
-    if (SEED_EVENT_IDS.has(eventId)) {
-      showToast('Built-in sample events cannot be deleted.');
-      return;
-    }
     deleteEventFromFirestore(eventId)
       .then(() => {
         setSelectedEventId((current) => (current === eventId ? null : current));
@@ -738,7 +752,7 @@ export default function App() {
       })
       .catch((err) => {
         console.warn('Delete failed:', err);
-        showToast('Only the organizer who published this event can delete it.');
+        showToast('Only the organizer who published this event, or an admin, can delete it.');
       });
   };
 
@@ -813,11 +827,7 @@ export default function App() {
   if (!firebaseUser) {
     return (
       <>
-        <AuthScreen
-          onRoleVerified={(role) => {
-            pendingRoleRef.current = role;
-          }}
-        />
+        <AuthScreen />
         <Toast toast={toast} onDismiss={dismissToast} />
       </>
     );
@@ -849,9 +859,57 @@ export default function App() {
         onOpenVideoShowcase={() => setIsVideoShowcaseOpen(true)}
         theme={theme}
         onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+        isAdmin={roles.isAdmin}
+        onOpenAdmin={() => setIsAdminOpen(true)}
       />
 
       <LiveCampusTicker notifications={notifications} onSelectNotification={openNotification} />
+
+      {!emailVerified && firebaseUser.providerData.some((p) => p.providerId === 'password') && (
+        <div role="status" className="bg-amber-50 border-b border-amber-200 text-amber-900 text-sm px-4 py-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
+          <span>Verify your email ({firebaseUser.email}) to secure your account and request organizer access.</span>
+          <button
+            type="button"
+            className="font-semibold underline cursor-pointer"
+            onClick={() =>
+              sendVerificationEmail(firebaseUser)
+                .then(() => showToast('Verification email sent.'))
+                .catch(() => showToast('Too many emails sent. Wait a few minutes.'))
+            }
+          >
+            Resend email
+          </button>
+          <button
+            type="button"
+            className="font-semibold underline cursor-pointer"
+            onClick={() =>
+              refreshVerification(firebaseUser)
+                .then((ok) => {
+                  setEmailVerified(ok);
+                  showToast(ok ? 'Email verified.' : 'Not verified yet. Open the link in the email first.');
+                })
+                .catch(() => showToast('Could not check. Try again.'))
+            }
+          >
+            I have verified it
+          </button>
+        </div>
+      )}
+
+      {eventsLoaded && publishedEvents.length === 0 && (
+        <div role="status" className="bg-brand-50 border-b border-brand-200 text-brand-900 text-sm px-4 py-2 text-center">
+          {roles.isAdmin ? (
+            <>
+              The event database is empty.{' '}
+              <button type="button" className="font-semibold underline cursor-pointer" onClick={() => setIsAdminOpen(true)}>
+                Open the admin console to load the schedule
+              </button>
+            </>
+          ) : (
+            'No events have been published yet. Check back soon.'
+          )}
+        </div>
+      )}
 
       {sharedDataError && (
         <div role="alert" className="bg-rose-50 border-b border-rose-200 text-rose-800 text-sm px-4 py-2 text-center">
@@ -893,8 +951,12 @@ export default function App() {
               onSelectEvent={selectEvent}
               onToggleRsvp={handleToggleRsvp}
               onOpenChat={openEventChat}
-              onOpenCreateModal={() => setIsFacultyModalOpen(true)}
+              onOpenCreateModal={() => {
+                if (requireOrganizer()) setIsFacultyModalOpen(true);
+              }}
               onDeleteEvent={handleDeleteEvent}
+              currentUid={signedInUid}
+              isAdmin={roles.isAdmin}
             />
           )}
 
@@ -953,6 +1015,8 @@ export default function App() {
           if (selectedEvent) void postMessage({ id: selectedEvent.id, type: 'event' }, text, tag);
         }}
         onDeleteEvent={handleDeleteEvent}
+        currentUid={signedInUid}
+        isAdmin={roles.isAdmin}
       />
 
       <ClubDetailModal
@@ -1011,6 +1075,17 @@ export default function App() {
         userEmail={activeEmail || undefined}
       />
 
+      {roles.isAdmin && (
+        <AdminPanel
+          isOpen={isAdminOpen}
+          onClose={() => setIsAdminOpen(false)}
+          actor={{ uid: firebaseUser.uid, email: firebaseUser.email || '' }}
+          events={publishedEvents}
+          registrationCount={registrations.length}
+          onToast={showToast}
+        />
+      )}
+
       <CampusVideoShowcase
         isOpen={isVideoShowcaseOpen}
         onClose={() => setIsVideoShowcaseOpen(false)}
@@ -1030,7 +1105,7 @@ export default function App() {
             role="alertdialog"
             aria-modal="true"
             aria-labelledby="restricted-title"
-            className="cc-dialog bg-white border border-ink-200 rounded-2xl p-6 max-w-md shadow-2xl text-center space-y-4"
+            className="cc-dialog bg-white border border-ink-200 rounded-2xl p-6 max-w-md w-full shadow-2xl text-center space-y-4"
           >
             <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center mx-auto">
               <ShieldAlert className="w-6 h-6" />
@@ -1040,16 +1115,17 @@ export default function App() {
                 Only organizers can do this
               </h3>
               <p className="text-sm text-ink-600 mt-1.5 leading-relaxed">
-                Publishing, deleting and announcing events is limited to event organizers and faculty. If that is you,
-                sign out and sign back in as an organizer with your passcode.
+                Publishing and managing events is limited to approved organizers. Ask for access below and an admin will
+                review it.
               </p>
             </div>
+            <OrganizerAccessCard user={firebaseUser} name={userProfile.name} onToast={showToast} />
             <button
               autoFocus
               onClick={closeRestricted}
               className="cc-btn-ink w-full py-2.5 rounded-xl text-sm font-semibold cursor-pointer"
             >
-              Got it
+              Close
             </button>
           </div>
         </div>

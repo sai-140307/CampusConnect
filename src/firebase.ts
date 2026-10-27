@@ -8,6 +8,8 @@ import {
   GoogleAuthProvider,
   signOut as firebaseSignOut,
   onAuthStateChanged,
+  sendEmailVerification,
+  sendPasswordResetEmail,
   User as FirebaseUser
 } from "firebase/auth";
 import { 
@@ -24,10 +26,11 @@ import {
   query,
   orderBy,
   limit,
-  serverTimestamp
+  serverTimestamp,
+  writeBatch
 } from "firebase/firestore";
 import firebaseConfigData from "../firebase-applet-config.json";
-import { ChatMessage, CampusEvent, EventRegistration, UserProfile } from "./types";
+import { ChatMessage, CampusEvent, EventRegistration, UserProfile, OrganizerRequest, AuditEntry, StaffMember } from "./types";
 
 // Web app's Firebase configuration from provisioning
 const firebaseConfig = {
@@ -286,6 +289,7 @@ export async function saveEventToFirestore(event: CampusEvent): Promise<void> {
 
 /** Delete a published event. Throws if the database refuses. */
 export async function deleteEventFromFirestore(eventId: string): Promise<void> {
+  // Allowed by the rules only for the organizer who published it, or an admin.
   await deleteDoc(doc(db, 'events', eventId));
 }
 
@@ -333,6 +337,183 @@ export async function registerForEvent(registration: EventRegistration): Promise
 /** Cancel a registration. Throws if the database refuses. */
 export async function cancelRegistration(id: string): Promise<void> {
   await deleteDoc(doc(db, 'registrations', id));
+}
+
+// ---------------------------------------------------------------------------
+// Account security
+// ---------------------------------------------------------------------------
+
+/** Email a verification link to the signed-in user. */
+export async function sendVerificationEmail(user: FirebaseUser): Promise<void> {
+  await sendEmailVerification(user);
+}
+
+/**
+ * Re-check the signed-in user's account after they click the verification link.
+ * Refreshes the sign-in token too, so the database sees the new verified status.
+ */
+export async function refreshVerification(user: FirebaseUser): Promise<boolean> {
+  await user.reload();
+  await user.getIdToken(true);
+  return Boolean(auth.currentUser?.emailVerified);
+}
+
+/** Send a password reset link. Resolves without saying whether the account exists. */
+export async function sendPasswordReset(email: string): Promise<void> {
+  try {
+    await sendPasswordResetEmail(auth, email.trim());
+  } catch (err: any) {
+    // Do not reveal which emails have accounts.
+    if (err?.code === 'auth/user-not-found') return;
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Roles
+//
+// Roles live in their own collections, which only an admin can write (see
+// firestore.rules). A person cannot make themselves an organizer or an admin
+// from the browser. The first admin is added by hand in the Firebase console.
+// ---------------------------------------------------------------------------
+
+export interface RoleState {
+  isAdmin: boolean;
+  isOrganizer: boolean;
+  loaded: boolean;
+}
+
+/** Live role of the signed-in user, read from the admins and organizers collections. */
+export function subscribeToRoles(uid: string, onUpdate: (roles: RoleState) => void): () => void {
+  let isAdmin: boolean | null = null;
+  let isOrganizer: boolean | null = null;
+  const emit = () => {
+    if (isAdmin === null || isOrganizer === null) return;
+    onUpdate({ isAdmin, isOrganizer, loaded: true });
+  };
+  const stopAdmin = onSnapshot(
+    doc(db, 'admins', uid),
+    (snap: any) => { isAdmin = snap.exists(); emit(); },
+    () => { isAdmin = false; emit(); }
+  );
+  const stopOrganizer = onSnapshot(
+    doc(db, 'organizers', uid),
+    (snap: any) => { isOrganizer = snap.exists(); emit(); },
+    () => { isOrganizer = false; emit(); }
+  );
+  return () => {
+    stopAdmin();
+    stopOrganizer();
+  };
+}
+
+/** The signed-in user's own organizer request, if any. */
+export function subscribeToMyOrganizerRequest(
+  uid: string,
+  onUpdate: (request: OrganizerRequest | null) => void
+): () => void {
+  return onSnapshot(
+    doc(db, 'organizerRequests', uid),
+    (snap: any) => onUpdate(snap.exists() ? ({ ...snap.data(), uid } as OrganizerRequest) : null),
+    () => onUpdate(null)
+  );
+}
+
+/** Ask an admin for organizer access. Needs a verified email. */
+export async function requestOrganizerAccess(request: Omit<OrganizerRequest, 'status' | 'decidedAt' | 'decidedBy'>): Promise<void> {
+  await setDoc(doc(db, 'organizerRequests', request.uid), withoutUndefined({ ...request, status: 'pending' }));
+}
+
+// ---------------------------------------------------------------------------
+// Admin
+// ---------------------------------------------------------------------------
+
+function subscribeToCollection<T>(name: string, onUpdate: (items: T[]) => void, onError?: (e: unknown) => void): () => void {
+  return onSnapshot(
+    collection(db, name),
+    (snapshot: any) => {
+      const list: T[] = [];
+      snapshot.forEach((d: any) => list.push({ ...d.data(), id: d.id } as T));
+      onUpdate(list);
+    },
+    (error: unknown) => {
+      console.warn(`${name} sync paused:`, error);
+      if (onError) onError(error);
+    }
+  );
+}
+
+export const subscribeToOrganizerRequests = (cb: (items: (OrganizerRequest & { id: string })[]) => void, onError?: (e: unknown) => void) =>
+  subscribeToCollection('organizerRequests', cb, onError);
+
+export const subscribeToOrganizers = (cb: (items: StaffMember[]) => void, onError?: (e: unknown) => void) =>
+  subscribeToCollection('organizers', cb, onError);
+
+export const subscribeToAdmins = (cb: (items: StaffMember[]) => void, onError?: (e: unknown) => void) =>
+  subscribeToCollection('admins', cb, onError);
+
+export const subscribeToAuditLog = (cb: (items: AuditEntry[]) => void, onError?: (e: unknown) => void) =>
+  subscribeToCollection('auditLog', cb, onError);
+
+/** Number of user profiles. Admin only. */
+export async function countUsers(): Promise<number> {
+  const snap: any = await getDocs(collection(db, 'users'));
+  let n = 0;
+  snap.forEach(() => { n += 1; });
+  return n;
+}
+
+/** Record an admin action. Entries can be added but never changed or deleted. */
+async function writeAudit(actor: { uid: string; email: string }, action: string, detail: string): Promise<void> {
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  await setDoc(doc(db, 'auditLog', id), { actorUid: actor.uid, actorEmail: actor.email, action, detail, at: Date.now() });
+}
+
+export async function approveOrganizer(actor: { uid: string; email: string }, request: OrganizerRequest): Promise<void> {
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'organizers', request.uid), {
+    email: request.email,
+    name: request.name,
+    department: request.department || '',
+    grantedBy: actor.uid,
+    grantedAt: Date.now(),
+  });
+  batch.update(doc(db, 'organizerRequests', request.uid), { status: 'approved', decidedBy: actor.uid, decidedAt: Date.now() });
+  await batch.commit();
+  await writeAudit(actor, 'organizer.approve', `${request.name} <${request.email}>`);
+}
+
+export async function rejectOrganizer(actor: { uid: string; email: string }, request: OrganizerRequest): Promise<void> {
+  await updateDoc(doc(db, 'organizerRequests', request.uid), { status: 'rejected', decidedBy: actor.uid, decidedAt: Date.now() });
+  await writeAudit(actor, 'organizer.reject', `${request.name} <${request.email}>`);
+}
+
+export async function revokeOrganizer(actor: { uid: string; email: string }, member: StaffMember): Promise<void> {
+  await deleteDoc(doc(db, 'organizers', member.id));
+  await writeAudit(actor, 'organizer.revoke', `${member.name || ''} <${member.email || member.id}>`);
+}
+
+export async function adminDeleteEvent(actor: { uid: string; email: string }, event: CampusEvent): Promise<void> {
+  await deleteDoc(doc(db, 'events', event.id));
+  await writeAudit(actor, 'event.delete', `${event.title} (${event.date})`);
+}
+
+/**
+ * Write many events at once, in batches of 400 (Firestore allows 500 per batch).
+ * Calls `onProgress` after each batch.
+ */
+export async function saveEventsInBulk(
+  actor: { uid: string; email: string },
+  events: CampusEvent[],
+  onProgress?: (done: number, total: number) => void
+): Promise<void> {
+  for (let i = 0; i < events.length; i += 400) {
+    const batch = writeBatch(db);
+    events.slice(i, i + 400).forEach((e) => batch.set(doc(db, 'events', e.id), withoutUndefined(e)));
+    await batch.commit();
+    if (onProgress) onProgress(Math.min(i + 400, events.length), events.length);
+  }
+  await writeAudit(actor, 'events.load', `${events.length} events added`);
 }
 
 export { onAuthStateChanged };

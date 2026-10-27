@@ -30,6 +30,8 @@ interface EventsViewProps {
   onOpenChat: (eventId: string) => void;
   onOpenCreateModal: () => void;
   onDeleteEvent?: (eventId: string) => void;
+  currentUid?: string;
+  isAdmin?: boolean;
 }
 
 const CATEGORIES: ('All' | EventCategory)[] = [
@@ -60,6 +62,8 @@ export const EventsView: React.FC<EventsViewProps> = ({
   onOpenChat,
   onOpenCreateModal,
   onDeleteEvent,
+  currentUid,
+  isAdmin = false,
 }) => {
   const now = useNow();
   const [searchQuery, setSearchQuery] = useState('');
@@ -109,13 +113,8 @@ export const EventsView: React.FC<EventsViewProps> = ({
     setShowTodayOnly(false);
   };
 
-  const handlePostClick = () => {
-    if (isOrganizer) {
-      onOpenCreateModal();
-    } else {
-      setPermissionNoticeOpen(true);
-    }
-  };
+  // The app decides: organizers get the publish form, everyone else the access request.
+  const handlePostClick = () => onOpenCreateModal();
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8">
@@ -312,7 +311,7 @@ export const EventsView: React.FC<EventsViewProps> = ({
                 onOpenChat={onOpenChat}
               />
               {/* Organizer Delete Button if user is an organizer */}
-              {isOrganizer && onDeleteEvent && ev.createdBy && (
+              {onDeleteEvent && (isAdmin || (isOrganizer && ev.createdBy === currentUid)) && (
                 <button
                   type="button"
                   onClick={(e) => {
