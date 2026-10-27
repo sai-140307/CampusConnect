@@ -54,8 +54,10 @@ export interface CampusEvent {
   dressCode?: string;
   eligibility: string; // e.g. "Open to all students"
   attendeeAvatars: string[];
-  /** User id of the organizer who published it. Absent on built-in sample events. */
+  /** User id of the organizer or admin who published it. */
   createdBy?: string;
+  /** True for events loaded in bulk by an admin from the built-in schedule. */
+  seeded?: boolean;
   createdAt?: number;
 }
 
@@ -230,4 +232,34 @@ export interface UserProfile {
   role: UserRole;
   organizerDepartment?: string;
   emailSettings?: EmailNotificationSettings;
+}
+
+export interface OrganizerRequest {
+  uid: string;
+  email: string;
+  name: string;
+  department?: string;
+  reason?: string;
+  status: 'pending' | 'approved' | 'rejected';
+  requestedAt: number;
+  decidedAt?: number;
+  decidedBy?: string;
+}
+
+/** A row in the organizers or admins collection. `id` is the person's user id. */
+export interface StaffMember {
+  id: string;
+  email?: string;
+  name?: string;
+  department?: string;
+  grantedAt?: number;
+}
+
+export interface AuditEntry {
+  id: string;
+  actorUid: string;
+  actorEmail: string;
+  action: string;
+  detail: string;
+  at: number;
 }
